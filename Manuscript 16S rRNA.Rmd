@@ -1,0 +1,702 @@
+---
+title: "Paige - Metals"
+Authors: "Paige Strudwick"
+Date created: 12/05/2023
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+### functions for adonis ===========================================================================
+```{r, functionz for pairwise adonis}
+library(vegan)
+#library(devtools)
+#install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+
+### Method summary
+summary.pwadonis = function(object, ...) {
+  cat("Result of pairwise.adonis:\n")
+  cat("\n")
+  print(object, ...)
+  cat("\n")
+  cat("Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n")
+}
+
+
+pairwise.adonis2 <- function(x, data, strata = NULL, nperm=999, ... ) {
+
+#describe parent call function 
+ststri <- ifelse(is.null(strata),'Null',strata)
+fostri <- as.character(x)
+#list to store results
+
+#copy model formula
+   x1 <- x
+# extract left hand side of formula
+  lhs <- x1[[2]]
+# extract factors on right hand side of formula 
+  rhs <- x1[[3]]
+# create model.frame matrix  
+  x1[[2]] <- NULL   
+  rhs.frame <- model.frame(x1, data, drop.unused.levels = TRUE) 
+
+# create unique pairwise combination of factors 
+  co <- combn(unique(as.character(rhs.frame[,1])),2)
+
+# create names vector   
+  nameres <- c('parent_call')
+  for (elem in 1:ncol(co)){
+  nameres <- c(nameres,paste(co[1,elem],co[2,elem],sep='_vs_'))
+  }
+#create results list  
+  res <- vector(mode="list", length=length(nameres))
+  names(res) <- nameres
+
+#add parent call to res 
+res['parent_call'] <- list(paste(fostri[2],fostri[1],fostri[3],', strata =',ststri, ', permutations',nperm ))
+
+  
+#start iteration trough pairwise combination of factors  
+ for(elem in 1:ncol(co)){
+
+#reduce model elements  
+	if(inherits(eval(lhs),'dist')){	
+	    xred <- as.dist(as.matrix(eval(lhs))[rhs.frame[,1] %in% c(co[1,elem],co[2,elem]),
+		rhs.frame[,1] %in% c(co[1,elem],co[2,elem])])
+	}else{
+	xred <- eval(lhs)[rhs.frame[,1] %in% c(co[1,elem],co[2,elem]),]
+	}
+	
+	mdat1 <-  data[rhs.frame[,1] %in% c(co[1,elem],co[2,elem]),] 
+
+# redefine formula
+	if(length(rhs) == 1){
+		xnew <- as.formula(paste('xred',as.character(rhs),sep='~'))	
+		}else{
+		xnew <- as.formula(paste('xred' , 
+					paste(rhs[-1],collapse= as.character(rhs[1])),
+					sep='~'))}
+					
+#pass new formula to adonis
+	if(is.null(strata)){
+	ad <- adonis2(xnew,data=mdat1, ... )
+	}else{
+	perm <- how(nperm = nperm)
+    setBlocks(perm) <- with(mdat1, mdat1[,ststri])
+    ad <- adonis2(xnew,data=mdat1,permutations = perm, ... )}
+	
+  res[nameres[elem+1]] <- list(ad[1:5])
+  }
+  #names(res) <- names  
+  class(res) <- c("pwadstrata", "list")
+  return(res)
+} 
+
+
+### Method summary
+summary.pwadstrata = function(object, ...) {
+  cat("Result of pairwise.adonis2:\n")
+  cat("\n")
+  print(object[1], ...)
+  cat("\n")
+  
+  cat("Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n")
+}
+
+
+pairwise.adonis <- function(x,factors, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni',reduce=NULL,perm=9999)
+{
+co <- combn(unique(as.character(factors)),2)
+pairs <- c()
+Df <- c()
+SumsOfSqs <- c()
+F.Model <- c()
+R2 <- c()
+p.value <- c()
+for(elem in 1:ncol(co)){
+  if(inherits(x, 'dist')){
+    x1=as.matrix(x)[factors %in% c(as.character(co[1,elem]),as.character(co[2,elem])),
+                    factors %in% c(as.character(co[1,elem]),as.character(co[2,elem]))]
+    }
+  else  (
+    if (sim.function == 'daisy'){
+          x1 = daisy(x[factors %in% c(co[1,elem],co[2,elem]),],metric=sim.method)
+      } 
+    else{x1 = vegdist(x[factors %in% c(co[1,elem],co[2,elem]),],method=sim.method)}
+  )
+  ad <- adonis(x1 ~ factors[factors %in% c(co[1,elem],co[2,elem])],
+               permutations = perm);
+  pairs <- c(pairs,paste(co[1,elem],'vs',co[2,elem]));
+  Df <- c(Df,ad$aov.tab[1,1])
+  SumsOfSqs <- c(SumsOfSqs, ad$aov.tab[1,2])
+  F.Model <- c(F.Model,ad$aov.tab[1,4]);
+  R2 <- c(R2,ad$aov.tab[1,5]);
+  p.value <- c(p.value,ad$aov.tab[1,6])
+}
+p.adjusted <- p.adjust(p.value,method=p.adjust.m)
+sig = c(rep('',length(p.adjusted)))
+sig[p.adjusted <= 0.05] <-'.'
+sig[p.adjusted <= 0.01] <-'*'
+sig[p.adjusted <= 0.001] <-'**'
+sig[p.adjusted <= 0.0001] <-'***'
+pairw.res <- data.frame(pairs,Df,SumsOfSqs,F.Model,R2,p.value,p.adjusted,sig)
+if(!is.null(reduce)){
+  pairw.res <- subset (pairw.res, grepl(reduce,pairs))
+  pairw.res$p.adjusted <- p.adjust(pairw.res$p.value,method=p.adjust.m)
+  sig = c(rep('',length(pairw.res$p.adjusted)))
+  sig[pairw.res$p.adjusted <= 0.1] <-'.'
+  sig[pairw.res$p.adjusted <= 0.05] <-'*'
+  sig[pairw.res$p.adjusted <= 0.01] <-'**'
+  sig[pairw.res$p.adjusted <= 0.001] <-'***'
+  pairw.res <- data.frame(pairw.res[,1:7],sig)
+}
+class(pairw.res) <- c("pwadonis", "data.frame")
+return(pairw.res)
+} 
+```
+
+```{r, library needed}
+library(rlang)
+library(tidyverse) # for data tidying 
+library(ggplot2)   # for data visualisation (make plot)
+library(ggforce)
+library(readr)
+library(phyloseq)  # phylogeny analysis, lot of handy function
+library(vegan)     # to do permanova
+library(permute)
+library(lattice)
+library(gridExtra)
+library(taxa)
+library(dplyr)
+library(readr)
+library(stringr)
+library(agricolae)
+library(ape)
+library(tidyr)
+library(ggpubr)
+```
+
+```{r, To load the data, remove the unassigned from the domain column and remove contaminants}
+setwd("C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/16S/qiime/try4")
+metadata <- read_csv("C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/16S/qiime/try4/metadata.csv")
+asv.tab <- read_csv("C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/16S/qiime/try4/metal_asvtable.csv")
+taxa <- read_csv("C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/16S/qiime/try4/metal_taxonomy.csv")
+asv.tab2 <- left_join(asv.tab, taxa, by = c('ASV_ID'='ASV_ID'))
+ASV.filtered <- asv.tab2 %>% filter(domain %in% "d__Bacteria") ##to only select those
+ASV.filtered2 <- ASV.filtered[!is.na(ASV.filtered$phylum),] ##to ermove the NAs from the phylm column
+ASV.filtered2 <-ASV.filtered2 %>% filter(!species %in% "s__jellyfish_metagenome")
+## to remove those specific ASVs (contaminants)
+ASV.filtered2 <-ASV.filtered2 %>% filter(!ASV_ID %in% c("d5419abb9039b924fe8dcf93963a21dc", "5ce603d76feace23f78c36e7f0fa302b", "c829c93d43d7fd73ed8c0c9decdde333", "31e36f1e6e9987f5b47350ab727fec7d", "52e635b0c93a5e88393e488798de0aea", "6384b0076cbaa90b073b901dde7cea34", "c8848e6223ceffd6da632e68fcbfcbd6", "a97274e762a56aaa2224bda5858a9dd3", "bec3e6e67b72580957c900b030690970","442b0dc688768d2de44ee7316a0d2eb2"))
+```
+
+```{r, To create a taxonomy table and create a Genus/ID column  or Family/ID etc}
+#To select only the taxonomy information
+taxonomy <- ASV.filtered2 %>% select(c(1,28:34))
+##############     Step 1: OPTION 1     ###############
+##replace g_unassigned or uncultured with family
+taxonomy[taxonomy == "p__unassigned" | taxonomy == "p__uncultured" | taxonomy == "c__unassigned" | taxonomy == "c__uncultured" | taxonomy == "o__unassigned" | taxonomy == "o__uncultured" | taxonomy == "f__unassigned" | taxonomy == "f__uncultured" | taxonomy == "g__unassigned" | taxonomy == "g__uncultured" | taxonomy == "s__unassigned" | taxonomy == "s__uncultured" | taxonomy == "s__uncultured_bacterium"] <- ""
+
+taxonomy<-as.data.frame(taxonomy)
+taxonomy[taxonomy == ""] <- NA
+taxonomy <- taxonomy %>%
+  mutate(class = if_else(is.na(phylum), domain, phylum)) %>%
+  mutate(class = if_else(is.na(class), phylum, class)) %>%
+  mutate(order = if_else(is.na(order), family, order)) %>%
+  mutate(family = if_else(is.na(family), order, family)) %>%
+  mutate(genus = if_else(is.na(genus), family, genus)) %>%
+  mutate(species = if_else(is.na(species), genus, species))
+
+##############     Step 1: OPTION 2     ###############
+#To replace all the NA 
+#taxonomy$domain <- forcats::fct_explicit_na(taxonomy$domain, 'd__unassigned')
+#taxonomy$phylum <- forcats::fct_explicit_na(taxonomy$phylum, 'p__unassigned')
+#taxonomy$class <- forcats::fct_explicit_na(taxonomy$class, 'c__unassigned')
+#taxonomy$order <- forcats::fct_explicit_na(taxonomy$order, 'o__unassigned')
+#taxonomy$family <- forcats::fct_explicit_na(taxonomy$family, 'f__unassigned')
+#taxonomy$genus <- forcats::fct_explicit_na(taxonomy$genus, 'g__unassigned')
+#taxonomy$species <- forcats::fct_explicit_na(taxonomy$species, 's__unassigned')
+
+############## Step 2: Options depending on what you want to plot by ###############
+
+#To create a Genus/ID column  or Family/ID
+taxonomy <- taxonomy %>% unite('GID', c(genus, ASV_ID), remove=FALSE, sep='/')
+```
+
+```{r, To calculate relative abundance of the bacterial to the number of reads}
+ASV <- ASV.filtered2 %>% select(c(1:27))
+gid <- taxonomy %>% select("GID", "ASV_ID")
+ASV <- gid  %>% left_join(ASV, by = "ASV_ID")
+ASV <- ASV %>% select(-c(2)) ## to get rid of ASV_ID and only keep GID
+ASV_data_long <- ASV %>% gather(key = "sampleid", value = "abund", 2:27)
+# Calculate the total of abund only within the the samples
+ASV_tot <- ASV_data_long %>% group_by(sampleid) %>% summarise(total_bac = sum(abund))
+ASV_tot <- ASV_data_long %>% left_join(ASV_tot, c("sampleid"="sampleid"))
+# Calculate of relative abundance
+ASV_data_long_norm <- mutate(ASV_tot, ra.percent = (abund/total_bac)*100)
+###check ra percent totals 100
+ASV_tot_check <- ASV_data_long_norm %>% group_by(sampleid) %>% summarise(ra.percentTOT = sum(ra.percent))
+ASV_data_long_norm <- ASV_data_long_norm %>% separate(GID, c('g', 'genusASV'), remove=FALSE, sep='__')
+ASV_data_long_norm <- ASV_data_long_norm %>% separate(GID, c('genus', 'ASV'), remove=FALSE, sep='/')
+#####to remove all samples with less than 4050 reads
+ASV_data_long_norm <- ASV_data_long_norm %>% filter(!sampleid %in% "Mars6")
+ASV_data_long_norm <- ASV_data_long_norm %>% filter(!sampleid %in% "Neg")
+ASV_data_plot1 <- ASV_data_long_norm %>% left_join(metadata, by = 'sampleid')
+ASV_data_long_norm <- ASV_data_long_norm %>% select(c(1:9))
+```
+
+```{r, normalisation and NMDS}
+ASV_data_long_norm20 <- mutate(ASV_data_long_norm, ra.Norm= (abund / total_bac)*20000)
+ASV_data_long_norm20 <- ASV_data_long_norm20 %>% left_join(metadata)
+#####to save a file for PAST
+ASV_norm.sub = subset(ASV_data_long_norm20, select = c(GID, sampleid, ra.percent))
+ASV_norm.wide <- reshape2::dcast(ASV_norm.sub, sampleid~GID, value.var = "ra.percent", fill=0)
+rowSums(ASV_norm.wide[,-c(1)])
+ASV_norm.wide.nmds2 <- ASV_norm.wide[,-c(1)]
+rownames(ASV_norm.wide.nmds2)<-ASV_norm.wide$sampleid
+ASV_norm.widemeta <- ASV_norm.wide %>% left_join(metadata)
+order_meta <- ASV_norm.widemeta %>% select(c(1,2906:2910))
+#write_csv(ASV_norm.widemeta, 'FINAL_ASVtable.csv')
+```
+## Fig S3b.
+```{r, Fig S3b. nMDS for all coral together}
+## to compare propagules to reef
+ASV_all_coral_norm20_2 <- ASV_data_long_norm20 %>% filter(!sampleid %in% c("Mars6"))
+ASV_all_coral_norm20_2 <- ASV_all_coral_norm20_2 %>% filter(!sampleid %in% c("Nurs5"))
+ASV_all_coral_norm20_2 <- ASV_all_coral_norm20_2 %>% filter(!sampleid %in% c("Par6_0"))
+ASV_all_coral_norm20_2 <- ASV_all_coral_norm20_2 %>% filter(!sampleid %in% c("Par5_6m"))
+ASV_all_coral_norm20 <- ASV_all_coral_norm20_2 %>% filter(!sampleid %in% c("Neg"))
+
+ASV_all_coral_norm20.sub = subset(ASV_all_coral_norm20, select = c(GID, sampleid, ra.Norm))
+ASV_all_coral_norm20.wide <- reshape2::dcast(ASV_all_coral_norm20.sub, sampleid~GID, value.var = "ra.Norm", fill=0)
+
+rowSums(ASV_all_coral_norm20.wide[,-c(1)])
+ASV_all_coral_norm20.wide.nmds2 <- ASV_all_coral_norm20.wide[,-c(1)]
+rownames(ASV_all_coral_norm20.wide.nmds2)<-ASV_all_coral_norm20.wide$sampleid
+#write_csv(ASV_all_coral_norm20.wide, 'FINAL_ASVtable.csv')
+#now ready for the NMDS
+all_coral_nmds.sqrt<-sqrt(ASV_all_coral_norm20.wide.nmds2)
+library(data.table)
+all_coral_stats<-setDT(all_coral_nmds.sqrt, keep.rownames = "sampleid")
+### to identify which dissimilairty metric is most suited to the data
+all_coral_nmds.sqrt2 <- all_coral_nmds.sqrt[,-c(1)]
+#all_coral_nmds.sqrt2 <- all_coral_nmds.sqrt[,-c(3472)]
+rank.totus <- rankindex(as.matrix(all_coral_nmds.sqrt2), ASV_all_coral_norm20.wide.nmds2, indices = c("bray", "euclid", "manhattan", "horn", "jaccard"), method = "spearman")
+print(paste("The highest rank was given by the", names(sort(rank.totus, decreasing = TRUE)[1]), "method."))
+
+all_coral_nmds.sqrt <- all_coral_nmds.sqrt[,-c(1)]
+all_coral_nmds.sqrt.nMDS<-metaMDS(all_coral_nmds.sqrt,distance = "bray", try =99, trymax=100, autotransform = F)
+all_coral_nmds.sqrt.nMDS
+stressplot(all_coral_nmds.sqrt.nMDS)
+plot(all_coral_nmds.sqrt.nMDS)
+names(all_coral_nmds.sqrt.nMDS)
+all_coral_nmds.sqrt.points<-cbind(ASV_all_coral_norm20.wide[,c(1)], as.data.frame(all_coral_nmds.sqrt.nMDS$points))
+colnames(all_coral_nmds.sqrt.points)[1] <- "sampleid"
+all_coral_nmds.sqrt.points <- all_coral_nmds.sqrt.points %>% left_join(metadata)
+```
+
+```{r, PLOT nMDS for all_coral}
+library(tidyverse)
+library(ggrepel)
+
+all_coralMDS.vegan2 <- ggplot(all_coral_nmds.sqrt.points) + 
+  geom_point(aes(x = MDS1, y = MDS2, color = treatment, shape = colony), size = 8) +
+#to add labels to points  geom_text(aes(x = MDS1, y = MDS2, label = colony), hjust = 2, vjust = 2, size = 3) +
+  theme_bw()
+all_coralMDS.vegan2
+
+all_coralMDS.vegan22 <- all_coralMDS.vegan2 + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + guides(size = FALSE) +
+  labs(title= 'bray')+
+  scale_colour_manual(values=c(`reef`="#E0E526",`reef6m`="#19D609", `mars`="#09ABD6", `nursery`="#E58826", `rebar`="#581845"))+
+    scale_shape_manual(values = c(15,16,17,18,25,23))+
+    guides(color = guide_legend("treatment",override.aes = list(size = 8)))+
+  guides(shape = guide_legend("colony",override.aes = list(size=6)))+
+  theme(legend.text=element_text(size=11))
+all_coralMDS.vegan22
+#ggsave('C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/16S/qiime/try4/plots/T6m plots/300523_16SnMDS_JUST_propagulesT6m.pdf', height=4, width=6)
+```
+
+```{r, Statistical Tests - pairwise adonis}
+all_coral_nmds.sqrt<-sqrt(ASV_all_coral_norm20.wide.nmds2)
+all_coral_codes.list<- subset(all_coral_stats, select = c(sampleid))
+#to make the rownames a column again
+all_coral_nmds.sqrt$sampleid <- rownames(all_coral_nmds.sqrt) 
+all_coral_codes.list2<-distinct(all_coral_codes.list)
+all_coral_codes.list2<-all_coral_codes.list2 %>% arrange(all_coral_codes.list2)
+all_coral_list.meta <-all_coral_codes.list2 %>% left_join(metadata)
+all_coral_nmds.sqrt.meta <-all_coral_list.meta %>% left_join(all_coral_nmds.sqrt)
+all_coral_sqrt.meta.mat<-as.matrix(all_coral_nmds.sqrt.meta[,-c(1:6)])
+rownames(all_coral_sqrt.meta.mat) <- all_coral_nmds.sqrt.meta$sampleid;
+####do bray matrix and then statistics on the differences
+
+bray.dist<-vegdist(all_coral_sqrt.meta.mat, method='bray')
+adonis.res <- adonis2(bray.dist~treatment, data=all_coral_nmds.sqrt.meta, permutations =9999, method="bray")
+adonis.res
+all_coralpairwise.res <- pairwise.adonis(bray.dist, all_coral_nmds.sqrt.meta$treatment,
+                                 p.adjust.m = "fdr")
+summary.pwadonis(all_coralpairwise.res)
+```
+## Fig 4b. Relative abundance plots ============================
+```{r, genus plot standard colours}
+ASV_data_plot1$time <- as.character(ASV_data_plot1$time)
+ASV_data_plot1$treatment <- as.character(ASV_data_plot1$treatment)
+
+####subset to remove negative
+ASV_data_plotcoral <- ASV_data_plot1 %>% filter(!sampleid %in% "Neg")
+ASV_data_plotcoral <- ASV_data_plotcoral %>% filter(!sampleid %in% "Mars6")
+ASV_data_plotcoral2 <- ASV_data_plotcoral %>% filter(!treatment %in% "reef6m")
+ASV_data_plotcoral2$treatment <- factor(ASV_data_plotcoral2$treatment, levels =rev(c("reef", "reef6m","mars","nursery","rebar")))
+
+RA_Genus <- ggplot(ASV_data_plotcoral2, aes(x=colony, y=ra.percent, fill = fct_reorder(genus, ra.percent))) + 
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment)) + ###might not work
+theme(axis.text.x = element_text(angle = 90)) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=5))+
+theme(legend.position = "right") +
+guides(fill=guide_legend(ncol=3)) +    
+theme_bw() +
+theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_text(angle = 65, vjust = 0.6)) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+##scale_fill_manual(palette = "Set1", "Family level") +
+labs(title='Bacteria 16S',
+     subtitle = "Relative abundance to genus level for all out-plants over time") + 
+xlab("Time point") +
+ylab("Relative Abundance")
+RA_Genus
+#ggsave('C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/16S/DATA/Enviro_RAplots_genus.png', height=14, width=35)
+```
+
+```{r, to organise colours and abundance for custom RA plot}
+#################above is for genus, below is for genus_genus
+count <- ASV_data_plotcoral2%>% group_by(GID) %>% summarise(remaining=sum(ra.percent))# 
+genusASV_abund= subset(ASV_data_plotcoral2, select = c(sampleid, GID, ra.percent, genus))
+a1 <- genusASV_abund %>% group_by(sampleid) %>% summarise(remaining=sum(ra.percent))
+genusASV.abund.names <- subset(genusASV_abund, select = c(genus)) %>% distinct()
+genusASV.abund<-ASV_data_plotcoral2 %>%
+  filter(genus %in% genusASV.abund.names$genus)
+#ASV.abund<-ASV.abund %>% separate('GID', c("genus", "ASV"), remove=F, sep='/')
+
+genus.abund <- genusASV.abund %>% group_by(genus, sampleid) %>% summarise(G_prec=sum(ra.percent))
+genus.abund <- genus.abund %>% filter(G_prec>0.1)
+genusplot_order <- genus.abund %>% group_by(genus, sampleid) %>% summarise(sum_prec=sum(G_prec)) %>% distinct() %>% pivot_wider(names_from = "sampleid", values_from = "sum_prec", values_fill = 0)
+#write_csv(genusplot_order, 'C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/16S/qiime/try4/genus_figure_order_wide.csv')
+genusCOLplot.order <-read_csv('C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/16S/qiime/try4/COLsup_figure_order_wide2.csv')
+na.omit(genusCOLplot.order)
+genusplot_final_vec<- genusCOLplot.order$color
+names(genusplot_final_vec) <- genusCOLplot.order$genus
+genus.order_vec<- genusCOLplot.order$genus
+names(genus.order_vec) <- genusCOLplot.order$genus
+
+##to check total number of reads for each sampleid
+sum_reads <- ASV_data_plotcoral2 %>%
+  group_by(sampleid) %>%
+  summarize(sum_abund = sum(abund))
+ASV_data_plotcoral <- ASV_data_plot1 %>% filter(!sampleid %in% "Neg")
+ASV_data_plotcoral2 <- ASV_data_plotcoral %>% filter(!sampleid %in% "Mars6")
+ASV_data_plotcoral2 <- ASV_data_plotcoral %>% filter(!sampleid %in% "Par5_6m")
+#genus.abund <- genus.abund %>% left_join(metadata, by = 'sampleid')
+#genus.abund <- genus.abund %>% unite('colT', c(time_point, donor), remove=FALSE, sep='_')
+Treat_Genus2 <- ggplot(ASV_data_plotcoral2, aes(x=colony, y=ra.percent, fill = factor(genus, levels=c(genus.order_vec)))) + 
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment), vars(time_point)) + ###might not work
+theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values=genusplot_final_vec, name='genus') +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=6))+
+theme(legend.position = "right") +
+guides(fill=guide_legend(ncol=2)) +    
+theme_bw() +
+theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_text(angle = 65, vjust = 0.6)) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+##scale_fill_manual(palette = "Set1", "Family level") +
+labs(title = "Relative abundance to genus level") + 
+xlab("Donor Colony") +
+ylab("Relative Abundance (%)")
+Treat_Genus2
+###to make smaller legend (subset)
+###to make legend show only top abundant ASVs
+order_legend_color <- genusCOLplot.order[c(291:311),1]
+order_genus <- order_legend_color %>% pull(genus)
+na.omit(order_genus)
+
+
+treat_Genus3 <- ggplot(ASV_data_plotcoral2, aes(x=colony, y=ra.percent, fill = factor(genus, levels=c(genus.order_vec)))) +
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment), vars(time_point)) + 
+   scale_fill_manual(values=genusplot_final_vec, name='genus', breaks = order_genus) +
+#theme(axis.text.x = element_text(angle = 90)) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=5))+
+theme(legend.position = "right")+
+guides(fill=guide_legend(ncol=1))+    
+#change legend key width
+theme_bw() +
+  theme(legend.text = element_text(face = "italic")) + 
+#theme(axis.text.x = element_blank())+
+#theme(axis.title.x = element_blank())+
+  theme(axis.text.y = element_blank())+
+theme(axis.title.y = element_blank())+
+  theme(legend.key.size = unit(0.4, 'cm'), #change legend key size
+        legend.key.height = unit(0.4, 'cm'), #change legend key height
+        legend.key.width = unit(0.4, 'cm'))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+treat_Genus3
+
+#ggsave('C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/16S/qiime/try4/genusRA.pdf', height=5, width=6, treat_Genus3)
+```
+## Fig 4a. nMDS ============================================================
+```{r, OTU table - only relative abundance - make physeq object for deseq/metagenomseq etc}
+#To create a dataframe = OTU table with the GID as row names and add taxonomy to export to Excel to do PAST stats
+library(dplyr)
+library(tidyverse)
+ASV <- ASV_data_long_norm %>% select('sampleid', 'GID', 'ra.percent') %>% spread(key = sampleid, value=ra.percent, fill=0)
+#ASV <- ASV_data_long_norm20 %>% select('sampleid', 'GID', 'ra.percent') %>% spread(key = sampleid, value=ra.percent, fill=0)
+ASV2 <- ASV %>% separate(GID, c('genus','ID'), remove=FALSE, sep='/')
+#ASV3 <- ASV2 %>% left_join(taxonomy, c("ID"="ASV_ID"))
+ASV.matrix <- as.matrix(ASV2[,-c(1:3)]) 
+row.names(ASV.matrix) <- paste0(ASV$GID)
+###to remove columns with total equal to 0 or with NA an create a new matrix with these columns
+ASV.matrix.nz <- ASV.matrix[,colSums(ASV.matrix)!=0] 
+#r, Sample data tble
+#To create a datframe with the metadata with the sampleid as row names
+rownames(metadata) <- metadata$sampleid
+data2 <- as.data.frame(ASV.matrix)
+#write_csv(data2, "ASVmatrix.csv")
+env.data = sample_data(data.frame(metadata))
+rownames(env.data) <- env.data$sampleid
+#r, Taxonomy table
+#To create a dataframe with the taxonomy information with the GID as rows names 
+rownames(taxonomy) <- taxonomy$GID
+tax<-as.matrix(taxonomy)
+tax2<-tax[1:nrow(tax), 3:9]
+library(phyloseq)
+#r, physeq object
+ASV = otu_table(ASV.matrix.nz, taxa_are_rows = TRUE)
+TAX = tax_table(tax2)
+physeq1 = phyloseq(ASV, TAX)
+physeq2 = merge_phyloseq(physeq1, env.data)
+```
+
+```{r, Fig 4a. nMDS for prop coral together}
+## to compare propagules to reef
+ASV_prop_coral_norm20_2 <- ASV_data_long_norm20 %>% filter(!sampleid %in% c("Mars6"))
+ASV_prop_coral_norm20_2 <- ASV_prop_coral_norm20_2 %>% filter(!sampleid %in% c("Nurs5"))
+ASV_prop_coral_norm20_2 <- ASV_prop_coral_norm20_2 %>% filter(!treatment %in% c("reef"))
+ASV_prop_coral_norm20 <- ASV_prop_coral_norm20_2 %>% filter(!sampleid %in% c("Neg"))
+ASV_prop_coral_norm20.sub = subset(ASV_prop_coral_norm20, select = c(GID, sampleid, ra.Norm))
+ASV_prop_coral_norm20.wide <- reshape2::dcast(ASV_prop_coral_norm20.sub, sampleid~GID, value.var = "ra.Norm", fill=0)
+
+rowSums(ASV_prop_coral_norm20.wide[,-c(1)])
+ASV_prop_coral_norm20.wide.nmds2 <- ASV_prop_coral_norm20.wide[,-c(1)]
+rownames(ASV_prop_coral_norm20.wide.nmds2)<-ASV_prop_coral_norm20.wide$sampleid
+#write_csv(ASV_prop_coral_norm20.wide, 'FINAL_ASVtable.csv')
+#now ready for the NMDS
+prop_coral_nmds.sqrt<-sqrt(ASV_prop_coral_norm20.wide.nmds2)
+library(data.table)
+prop_coral_stats<-setDT(prop_coral_nmds.sqrt, keep.rownames = "sampleid")
+### to identify which dissimilairty metric is most suited to the data
+prop_coral_nmds.sqrt2 <- prop_coral_nmds.sqrt[,-c(1)]
+#prop_coral_nmds.sqrt2 <- prop_coral_nmds.sqrt[,-c(3472)]
+rank.totus <- rankindex(as.matrix(prop_coral_nmds.sqrt2), ASV_prop_coral_norm20.wide.nmds2, indices = c("bray", "euclid", "manhattan", "horn", "jaccard"), method = "spearman")
+print(paste("The highest rank was given by the", names(sort(rank.totus, decreasing = TRUE)[1]), "method."))
+
+prop_coral_nmds.sqrt <- prop_coral_nmds.sqrt[,-c(1)]
+prop_coral_nmds.sqrt.nMDS<-metaMDS(prop_coral_nmds.sqrt,distance = "bray", try =99, trymax=100, autotransform = F)
+prop_coral_nmds.sqrt.nMDS
+stressplot(prop_coral_nmds.sqrt.nMDS)
+plot(prop_coral_nmds.sqrt.nMDS)
+names(prop_coral_nmds.sqrt.nMDS)
+prop_coral_nmds.sqrt.points<-cbind(ASV_prop_coral_norm20.wide[,c(1)], as.data.frame(prop_coral_nmds.sqrt.nMDS$points))
+colnames(prop_coral_nmds.sqrt.points)[1] <- "sampleid"
+prop_coral_nmds.sqrt.points <- prop_coral_nmds.sqrt.points %>% left_join(metadata)
+```
+
+```{r, PLOT nMDS for prop_coral}
+library(tidyverse)
+library(ggrepel)
+
+prop_coralMDS.vegan2 <- ggplot(prop_coral_nmds.sqrt.points) + 
+  geom_point(aes(x = MDS1, y = MDS2, color = treatment, shape = colony), size = 8) +
+#to add labels to points  geom_text(aes(x = MDS1, y = MDS2, label = colony), hjust = 2, vjust = 2, size = 3) +
+  theme_bw()
+prop_coralMDS.vegan2
+
+prop_coralMDS.vegan22 <- prop_coralMDS.vegan2 + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + guides(size = FALSE) +
+  labs(title= 'bray')+
+  scale_colour_manual(values=c(`reef6m`="#19D609", `mars`="#09ABD6", `nursery`="#E58826", `rebar`="#581845"))+
+    scale_shape_manual(values = c(15,16,17,18,25,23))+
+    guides(color = guide_legend("treatment",override.aes = list(size = 8)))+
+  guides(shape = guide_legend("colony",override.aes = list(size=6)))+
+  theme(legend.text=element_text(size=11))
+prop_coralMDS.vegan22
+#ggsave('C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/16S/qiime/try4/plots/T6m plots/300523_16SnMDS_JUST_propagulesT6m.pdf', height=4, width=6)
+```
+
+```{r, Statistical Tests - pairwise adonis}
+prop_coral_nmds.sqrt<-sqrt(ASV_prop_coral_norm20.wide.nmds2)
+prop_coral_codes.list<- subset(prop_coral_stats, select = c(sampleid))
+#to make the rownames a column again
+prop_coral_nmds.sqrt$sampleid <- rownames(prop_coral_nmds.sqrt) 
+prop_coral_codes.list2<-distinct(prop_coral_codes.list)
+prop_coral_codes.list2<-prop_coral_codes.list2 %>% arrange(prop_coral_codes.list2)
+prop_coral_list.meta <-prop_coral_codes.list2 %>% left_join(metadata)
+prop_coral_nmds.sqrt.meta <-prop_coral_list.meta %>% left_join(prop_coral_nmds.sqrt)
+prop_coral_sqrt.meta.mat<-as.matrix(prop_coral_nmds.sqrt.meta[,-c(1:6)])
+rownames(prop_coral_sqrt.meta.mat) <- prop_coral_nmds.sqrt.meta$sampleid;
+####do bray matrix and then statistics on the differences
+bray.dist<-vegdist(prop_coral_sqrt.meta.mat, method='bray')
+adonis.res <- adonis2(bray.dist~treatment, data=prop_coral_nmds.sqrt.meta, permutations =9999, method="bray")
+adonis.res
+prop_coralpairwise.res <- pairwise.adonis(bray.dist, prop_coral_nmds.sqrt.meta$treatment,
+                                 p.adjust.m = "fdr")
+summary.pwadonis(prop_coralpairwise.res)
+```
+## Indicator species ============================================
+```{r, indicator species analysis}
+#install.packages("indicspecies")
+library(indicspecies)
+abund = ASV_norm.wide[,2:ncol(ASV_norm.wide)]
+abund <- ASV_norm.wide.nmds2
+treatment = ASV_norm.widemeta$treatment
+###multi-level pattern analysis - studies the association between species patterns and a combination of groups of sites.
+inv = multipatt(abund, treatment,  control = how(nperm=999), duleg=TRUE)
+summary(inv)
+```
+
+##phyloseq object for core
+```{r, OTU table - only relative abundance - make physeq object for deseq/metagenomseq/core etc}
+#To create a dataframe = OTU table with the GID as row names and add taxonomy to export to Excel to do PAST stats
+library(dplyr)
+library(tidyverse)
+ASV <- ASV_data_long_norm %>% select('sampleid', 'GID', 'ra.percent') %>% spread(key = sampleid, value=ra.percent, fill=0)
+#ASV <- ASV_data_long_norm20 %>% select('sampleid', 'GID', 'ra.percent') %>% spread(key = sampleid, value=ra.percent, fill=0)
+ASV2 <- ASV %>% separate(GID, c('genus','ID'), remove=FALSE, sep='/')
+#ASV3 <- ASV2 %>% left_join(taxonomy, c("ID"="ASV_ID"))
+ASV.matrix <- as.matrix(ASV2[,-c(1:3)]) 
+row.names(ASV.matrix) <- paste0(ASV$GID)
+###to remove columns with total equal to 0 or with NA an create a new matrix with these columns
+ASV.matrix.nz <- ASV.matrix[,colSums(ASV.matrix)!=0] 
+#r, Sample data tble
+
+#To create a datframe with the metadata with the sampleid as row names
+rownames(metadata) <- metadata$sampleid
+data2 <- as.data.frame(ASV.matrix)
+#write_csv(data2, "ASVmatrix.csv")
+env.data = sample_data(data.frame(metadata))
+rownames(env.data) <- env.data$sampleid
+#r, Taxonomy table
+#To create a dataframe with the taxonomy information with the GID as rows names 
+rownames(taxonomy) <- taxonomy$GID
+tax<-as.matrix(taxonomy)
+tax2<-tax[1:nrow(tax), 3:9]
+library(phyloseq)
+#r, physeq object
+ASV = otu_table(ASV.matrix.nz, taxa_are_rows = TRUE)
+TAX = tax_table(tax2)
+physeq1 = phyloseq(ASV, TAX)
+physeq2 = merge_phyloseq(physeq1, env.data)
+```
+
+```{r, to subset PHYOSEQ samples so stats are only performed addressing the questions you are trying to ask (i.e. does microbiome change significantly over time within outplants at sandbox}
+
+physeq3<- subset_samples(physeq2, sampleid != "Neg")
+physeq3<- subset_samples(physeq3, sampleid != "Par5_6m")
+physeq3<- subset_samples(physeq3, sampleid != "Mars6")
+physeq3<- subset_samples(physeq3, sampleid != "Par6_0")
+physeq3<- subset_samples(physeq3, sampleid != "Nurs5")
+
+
+time6m<- subset_samples(physeq3, time_point != "0")
+
+allprop<- subset_samples(time6m, treatment != "reef6m")
+
+physeq4<- subset_samples(physeq2, treatment != "reef6m")
+
+reef0<- subset_samples(physeq2, treatment = "reef0")
+reef6m<- subset_samples(physeq2, treatment = "reef6m")
+mars<- subset_samples(physeq2, treatment  = "mars")
+rebar<- subset_samples(physeq2, treatment = "rebar")
+nursery<- subset_samples(physeq2, treatment = "nursery")
+
+
+```
+## Core microbiome analysis ============================================
+```{r, Core microbiota analysis}
+#BiocManager::install("microbiome")
+library(microbiome)
+###to subset for core at each tp
+core_reef0 <- core_members(reef0, detection = 0.01/100, prevalence = 75/100)
+core_reef6m <- core_members(reef6m, detection = 0.01/100, prevalence = 75/100)
+core_nursery <- core_members(nursery, detection = 0.01/100, prevalence = 75/100)
+core_mars <- core_members(mars, detection = 0.01/100, prevalence = 75/100)
+core_rebar <- core_members(rebar, detection = 0.01/100, prevalence = 75/100)
+core_reef0
+core_reef6m
+core_nursery
+core_mars
+core_rebar
+
+
+###to select core ASVs and print ra.percent for each sample
+asv_ids <- c("c0c5212d3f2c35bc60e51c9eb66f9eae", "990814b1951efe5f6d6347e88e560e15", "4ea1619d620bc292d2319d11225ec6cc")
+# Filter the dataset by ASV IDs
+filtered_data <- ASV_data_long_norm[ASV_data_long_norm$ASV %in% asv_ids, ]
+
+# List of sample IDs
+sample_ids <- unique(filtered_data$sampleid)
+
+# List of GID values
+gid_values <- unique(filtered_data$GID)
+
+# Create an empty matrix with GID as rows and sampleid as columns
+matrix_data <- matrix(NA, nrow = length(gid_values), ncol = length(sample_ids), 
+                      dimnames = list(gid_values, sample_ids))
+
+# Fill in the matrix with ra.percent values
+for (i in 1:nrow(filtered_data)) {
+  gid <- filtered_data[i, "GID"]
+  sample_id <- filtered_data[i, "sampleid"]
+  ra_percent <- filtered_data[i, "ra.percent"]
+  
+  matrix_data[gid, sample_id] <- ra_percent
+}
+```
+## Betadisper analysis  ============================================
+```{r, BETADISPER to calculate distance to centroids, stats and plots}
+# 1. Calculate ecological ressemblance
+  ### Bray-Curtis dissimilarity (abundance weighted), Jaccard (presence/absence), Gower's (non-continuous variables)
+  ### Dissimilarity/ 0 = site are identical, 1 = sites do not share any species
+
+## to compare propagules to reef
+metadata2 <- metadata %>% filter(!treatment %in% c("reef"))
+metadata2 <- metadata2 %>% filter(!sampleid %in% c("Mars6"))
+metadata2 <- metadata2 %>% filter(!sampleid %in% c("Par5_6m"))
+metadata2 <- metadata2 %>% filter(!sampleid %in% c("Neg"))
+NORM.dist <- vegdist(all_coral_nmds.sqrt2, method = "bray")
+# 2. Multivariate dispersion: the average distance to group centroid, used as a measure of multivariate B diversity -  betadisper function studies the differences in group heterogeneity
+  ### is a multivariate analogue of Levene's test for homogeneity of variances. Non-euclidean distances between objects and group centroids are handled by reducing the original distances to principal coordinates
+subset_data <- ASV.matrix.nz[1:24, ]
+subset_metadata <- metadata2$treatment[1:24]
+
+RaNORM.dist <- vegdist(subset_data, method = "bray")
+dispersion <- betadisper(RaNORM.dist, group = subset_metadata)
+ 
+anova(dispersion)
+permu <- permutest(dispersion, pairwise=TRUE, permutations =99)
+permu
+(mod.HSD <- TukeyHSD(dispersion))
+plot(mod.HSD)
+## Plot the groups and distances to centroids on the
+## first two PCoA axes
+plot(dispersion)
+## with data ellipses instead of hulls
+plot(dispersion, ellipse = TRUE, hull = FALSE) # 1 sd data ellipse
+plot(dispersion, ellipse = TRUE, hull = FALSE, conf = 0.90) # 90% data ellipse
+# plot with manual colour specification
+my_cols <- c("mars" = "#09ABD6","nursery" = "#E58826","rebar" = "#581845","reef6m" = "#19D609")
+plot(dispersion, col = my_cols, pch = c(15,16,17,18), cex = 1.1)
+
+```

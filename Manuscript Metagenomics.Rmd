@@ -1,0 +1,1587 @@
+---
+title: "Paige - ASV data"
+Authors: "Paige Strudwick"
+Date created: 12/05/2023
+output: html_notebook
+---
+
+```{r, library needed}
+#install.packages(rlang)
+#library(rlang)
+library(tidyverse) # for data tidying 
+library(ggplot2)   # for data visualisation (make plot)
+#library(clustsig)
+library(ggforce)
+library(readr)
+#library(mvabund)  # multivariate abundance amalysis
+#library(BiocManager)
+#BiocManager::install("phyloseq")
+library(phyloseq)  # phylogeny analysis, lot of handy function
+library(vegan)     # to do permanova
+library(permute)
+library(lattice)
+
+#install.packages("devtools")
+#library(devtools)
+#install.packages("cManager")
+#cManager::install("metagenomeSeq")
+#install.packages("metagenomeSeq")
+#library(metagenomeSeq)
+#install.packages("gridExtra")
+library(gridExtra)
+#install.packages("metacoder")
+#library(metacoder)
+#install.packages("taxa")
+library(taxa)
+#install.packages("dplyr")
+library(dplyr)
+#install.packages("readr")
+library(readr)
+#install.packages("stringr")
+library(stringr)
+#install.packages("agricolae")
+library(agricolae)
+#install.packages("ape")
+library(ape)
+#install.packages("tidyr")
+library(tidyr)
+#install.packages("ggpubr")
+library(ggpubr)
+#install.packages("metagMisc")
+#library(metagMisc)
+#install.packages("microme")
+#library(microme)
+```
+
+### functions for adonis without internet ===========================================
+```{r, functionz for pairwise adonis}
+library(vegan)
+#library(devtools)
+#install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+
+### Method summary
+summary.pwadonis = function(object, ...) {
+  cat("Result of pairwise.adonis:\n")
+  cat("\n")
+  print(object, ...)
+  cat("\n")
+  cat("Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n")
+}
+
+
+pairwise.adonis2 <- function(x, data, strata = NULL, nperm=999, ... ) {
+
+#describe parent call function 
+ststri <- ifelse(is.null(strata),'Null',strata)
+fostri <- as.character(x)
+#list to store results
+
+#copy model formula
+   x1 <- x
+# extract left hand side of formula
+  lhs <- x1[[2]]
+# extract factors on right hand side of formula 
+  rhs <- x1[[3]]
+# create model.frame matrix  
+  x1[[2]] <- NULL   
+  rhs.frame <- model.frame(x1, data, drop.unused.levels = TRUE) 
+
+# create unique pairwise combination of factors 
+  co <- combn(unique(as.character(rhs.frame[,1])),2)
+
+# create names vector   
+  nameres <- c('parent_call')
+  for (elem in 1:ncol(co)){
+  nameres <- c(nameres,paste(co[1,elem],co[2,elem],sep='_vs_'))
+  }
+#create results list  
+  res <- vector(mode="list", length=length(nameres))
+  names(res) <- nameres
+
+#add parent call to res 
+res['parent_call'] <- list(paste(fostri[2],fostri[1],fostri[3],', strata =',ststri, ', permutations',nperm ))
+
+  
+#start iteration trough pairwise combination of factors  
+ for(elem in 1:ncol(co)){
+
+#reduce model elements  
+	if(inherits(eval(lhs),'dist')){	
+	    xred <- as.dist(as.matrix(eval(lhs))[rhs.frame[,1] %in% c(co[1,elem],co[2,elem]),
+		rhs.frame[,1] %in% c(co[1,elem],co[2,elem])])
+	}else{
+	xred <- eval(lhs)[rhs.frame[,1] %in% c(co[1,elem],co[2,elem]),]
+	}
+	
+	mdat1 <-  data[rhs.frame[,1] %in% c(co[1,elem],co[2,elem]),] 
+
+# redefine formula
+	if(length(rhs) == 1){
+		xnew <- as.formula(paste('xred',as.character(rhs),sep='~'))	
+		}else{
+		xnew <- as.formula(paste('xred' , 
+					paste(rhs[-1],collapse= as.character(rhs[1])),
+					sep='~'))}
+					
+#pass new formula to adonis
+	if(is.null(strata)){
+	ad <- adonis2(xnew,data=mdat1, ... )
+	}else{
+	perm <- how(nperm = nperm)
+    setBlocks(perm) <- with(mdat1, mdat1[,ststri])
+    ad <- adonis2(xnew,data=mdat1,permutations = perm, ... )}
+	
+  res[nameres[elem+1]] <- list(ad[1:5])
+  }
+  #names(res) <- names  
+  class(res) <- c("pwadstrata", "list")
+  return(res)
+} 
+
+
+### Method summary
+summary.pwadstrata = function(object, ...) {
+  cat("Result of pairwise.adonis2:\n")
+  cat("\n")
+  print(object[1], ...)
+  cat("\n")
+  
+  cat("Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n")
+}
+
+
+pairwise.adonis <- function(x,factors, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni',reduce=NULL,perm=9999)
+{
+co <- combn(unique(as.character(factors)),2)
+pairs <- c()
+Df <- c()
+SumsOfSqs <- c()
+F.Model <- c()
+R2 <- c()
+p.value <- c()
+for(elem in 1:ncol(co)){
+  if(inherits(x, 'dist')){
+    x1=as.matrix(x)[factors %in% c(as.character(co[1,elem]),as.character(co[2,elem])),
+                    factors %in% c(as.character(co[1,elem]),as.character(co[2,elem]))]
+    }
+  else  (
+    if (sim.function == 'daisy'){
+          x1 = daisy(x[factors %in% c(co[1,elem],co[2,elem]),],metric=sim.method)
+      } 
+    else{x1 = vegdist(x[factors %in% c(co[1,elem],co[2,elem]),],method=sim.method)}
+  )
+  ad <- adonis(x1 ~ factors[factors %in% c(co[1,elem],co[2,elem])],
+               permutations = perm);
+  pairs <- c(pairs,paste(co[1,elem],'vs',co[2,elem]));
+  Df <- c(Df,ad$aov.tab[1,1])
+  SumsOfSqs <- c(SumsOfSqs, ad$aov.tab[1,2])
+  F.Model <- c(F.Model,ad$aov.tab[1,4]);
+  R2 <- c(R2,ad$aov.tab[1,5]);
+  p.value <- c(p.value,ad$aov.tab[1,6])
+}
+p.adjusted <- p.adjust(p.value,method=p.adjust.m)
+sig = c(rep('',length(p.adjusted)))
+sig[p.adjusted <= 0.05] <-'.'
+sig[p.adjusted <= 0.01] <-'*'
+sig[p.adjusted <= 0.001] <-'**'
+sig[p.adjusted <= 0.0001] <-'***'
+pairw.res <- data.frame(pairs,Df,SumsOfSqs,F.Model,R2,p.value,p.adjusted,sig)
+if(!is.null(reduce)){
+  pairw.res <- subset (pairw.res, grepl(reduce,pairs))
+  pairw.res$p.adjusted <- p.adjust(pairw.res$p.value,method=p.adjust.m)
+  sig = c(rep('',length(pairw.res$p.adjusted)))
+  sig[pairw.res$p.adjusted <= 0.1] <-'.'
+  sig[pairw.res$p.adjusted <= 0.05] <-'*'
+  sig[pairw.res$p.adjusted <= 0.01] <-'**'
+  sig[pairw.res$p.adjusted <= 0.001] <-'***'
+  pairw.res <- data.frame(pairw.res[,1:7],sig)
+}
+class(pairw.res) <- c("pwadonis", "data.frame")
+return(pairw.res)
+} 
+```
+### functions for adonis ===========================================================================
+```{r, to get latest adonis Oct 22}
+library(devtools)
+BiocManager::install("Rtools")
+library(Rtools)
+install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+```
+## TAXONOMY
+```{r, To load the data, remove the unassigned from the domain column and remove contaminants}
+
+setwd("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis")
+METAG_metadata <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/METAG_metadata.csv")
+
+GTDB_ASV.tab <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/GTDB_taxa_abund_table.csv")
+GTDB_taxa <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/GTDB_taxa.csv")
+
+ASV.tab2 <- GTDB_ASV.tab  %>% left_join(GTDB_taxa, by = "ASV_ID")
+#ASV.tab2 <- ASV.tab  %>% left_join(taxa, by = "ASV_ID")
+
+ASV.filtered <- ASV.tab2 %>% filter(superkingdom %in% "d__Bacteria") 
+#ASV.filtered <- ASV.tab2 %>% filter(kingdom %in% "k__Bacteria") ##to only select those
+#ASV.filtered2 <- ASV.filtered[!is.na(ASV.filtered$phylum),] ##to ermove the NAs from the phylm column
+#ASV.filtered2 <-ASV.filtered2 %>% filter(!ASV_ID %in% c("6c7ef9af98aab9d58fcaf554d0fa82ba","f99d704e1171c86a835c8a238b089072","e5a6fd875ae59b9327fc792e7e9754db", "69be89b2408dcfdd53fced6302c0016c","ca6ee87daec853e746bc1422258d5c4b","84844fa4f845d0da02b32cc49220","c7a86575485588dd25e615177ee3b5ee","2543c2b86db32fe0134b97761a4f5d28","0da4a7da7228c92de8105705f7d0fac0","63a1e0822162c77ce09e6527b675334d","cd0f8a1e3d999aed263658e0420e120f")) ## to remove those specific ASVs (contaminants)
+
+
+```
+
+```{r, To create a taxonomy table and create a Genus/ID column  or Family/ID}
+#To select only the taxonomy information
+taxonomy <- ASV.filtered %>% select(c(1,17:23))
+#To create a Genus/ID column  or Family/ID
+taxonomy <- taxonomy %>% unite('GID', c(genus, ASV_ID), remove=FALSE, sep='/')
+#taxonomy <- taxonomy %>% unite('FGID', c(genus, ASV_ID), remove=FALSE, sep='/')
+#taxonomy <- taxonomy %>% unite('FGID', c(family, ASV_ID), remove=FALSE, sep='/')
+
+
+```
+
+```{r, To relative abundance the data to the number of reads}
+ASV <- ASV.filtered %>% select(c(1:16))
+gid <- taxonomy %>% select("GID", "ASV_ID")
+ASV <- ASV  %>% left_join(gid, by = 'ASV_ID')
+ASV <- ASV %>% select(-c(17)) ## to get rid of ASV_ID and only keep GID
+
+ASV_data_long <- ASV %>% gather(key = "sampleid", value = "abund", 2:16)
+total_reads <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/total_reads.csv")
+
+
+###multiply everything by 20000 to bring it out of % and recalculate % without unclassified members
+ASV_long_reads <- ASV_data_long %>% left_join(total_reads, c("sampleid"="sampleid"))
+ASV_long_reads$abund <- ASV_long_reads$abund * ASV_long_reads$total_reads
+
+ASV_data_long <- ASV_long_reads
+# Calculate the total of abund only within the the samples
+
+ASV_tot <- ASV_data_long %>% group_by(sampleid) %>% summarise(total_bac = sum(abund))
+ASV_tot <- ASV_data_long %>% left_join(ASV_tot, c("sampleid"="sampleid"))
+# Calculate of relative abundance
+
+ASV_data_long_norm <- mutate(ASV_tot, ra.percent = (abund / total_bac)*100)
+
+ASV_data_long_norm <- ASV_data_long_norm %>% left_join(taxonomy, by = 'ASV_ID')
+
+ASV_data_plot <- ASV_data_long_norm
+ASV_data_plot <- ASV_data_long_norm %>% left_join(METAG_metadata, c("sampleid"="sampleid"))
+#ASV_data_plot <- ASV_data_plot %>% unite('colT', c(time, colony), remove=FALSE, sep='_')
+```
+
+```{r, normalisation and NMDS}
+
+ASV_data_long_norm <- mutate(ASV_data_long_norm, ra.Norm= (abund / total_bac)*20000)
+
+ASV_data_long_norm20 <- ASV_data_long_norm %>% left_join(METAG_metadata)
+
+###to make df for contaminants
+
+
+
+#####to save a file for PAST - but it is too LARGE for excel (too many columns...)
+ASV_norm.sub = subset(ASV_data_long_norm, select = c(GID, sampleid, ra.percent))
+ASV_norm.wide <- reshape2::dcast(ASV_norm.sub, sampleid~GID, value.var = "ra.percent", fill=0)
+
+rowSums(ASV_norm.wide[,-c(1)])
+ASV_norm.wide.nmds2 <- ASV_norm.wide[,-c(1)]
+rownames(ASV_norm.wide.nmds2)<-ASV_norm.wide$sampleid
+
+ASV_norm.widemeta <- ASV_norm.wide %>% left_join(METAG_metadata)
+
+#order_meta <- ASV_norm.widemeta %>% select(c(1,16375:16381))
+#write_csv(ASV_norm.widemeta, 'FINAL_ASVtable2.csv')
+
+```
+
+```{r, to count how many ASVs are in a particular file or using filter to count per timepoint or for only 1 species }
+ASV_data_long2 <- ASV_data_long %>% filter(sampleid == "B1_6m") 
+count_ASV <- ASV_data_long2 %>% group_by(GID) %>% summarise(total=sum(abund))
+distinct(count_ASV)
+
+count_ASV1 <- filter(count_ASV, total > 0)
+count_ASV1
+```
+### Fig S4. relative abundance plots=======
+```{r, genus plot}
+
+ASV_data_plot$treatment <- as.character(ASV_data_plot$treatment)
+
+ASV_data_plot <- ASV_data_plot %>% unite('treatment_colony', c(treatment, colony), remove=FALSE, sep='_')
+library(RColorBrewer)
+ASV_data_plot <- ASV_data_plot %>% left_join(taxonomy, by = "GID")
+
+##check RA percent totals 100
+
+PLOTasv_tot_check <- ASV_data_plot %>% group_by(treatment_colony) %>% summarise(ra.percentTOT = sum(ra.percent))
+PLOTasv_tot_check
+
+plot_genus <- ggplot(ASV_data_plot, aes(x=colony, y=ra.percent, fill = fct_reorder(genus.x, ra.percent))) + 
+geom_bar(stat='identity') + # width = 0.5, 
+facet_grid(vars(treatment), vars(time)) +
+theme(axis.text.x = element_text(angle = 90)) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=5))+
+theme(legend.position = "right") +
+guides(fill=guide_legend(ncol=3)) +    
+theme_bw() +
+theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_text(angle = 65, vjust = 0.6)) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+##scale_fill_manual(palette = "Set1", "Family level") +
+labs(title = "Relative abundance to genus level for all treatments") + 
+xlab("Donor Colony") +
+ylab("Relative Abundance (%)")
+plot_genus
+
+
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.2 degradables Project/DATA/d_RAplots_genus.svg', height=14, width=35)
+
+
+```
+
+```{r, to organise colours and abundance for custome RA plot}
+#################above is for genus, below is for genus_genus
+count <- ASV_data_plot%>% group_by(GID) %>% summarise(remaining=sum(ra.percent))# maximum 12854 ASVS per sample in the NOT filtered number
+#limit to anything atleast over 0.1% of any replicate in the data set, if its not >0.1% RA anywhere (super rare, it will be removed)
+#genusASV_abund <- ASV_data_plot %>% filter(ra.percent>0.1)
+genusASV_abund= subset(genusASV_abund, select = c(sampleid, GID, ra.percent, genus.x))
+a1 <- genusASV_abund %>% group_by(sampleid) %>% summarise(remaining=sum(ra.percent))
+genusASV.abund.names <- subset(genusASV_abund, select = c(genus.x)) %>% distinct()
+genusASV.abund<-ASV_data_plot %>%
+  filter(genus.x %in% genusASV.abund.names$genus.x)
+#ASV.abund<-ASV.abund %>% separate('GID', c("genus", "ASV"), remove=F, sep='/')
+
+genus.abund <- genusASV.abund %>% group_by(genus.x, sampleid) %>% summarise(G_prec=sum(ra.percent))
+genus.abund <- genus.abund %>% filter(G_prec>0.1)
+genusplot_order <- genus.abund %>% group_by(genus.x, sampleid) %>% summarise(sum_prec=sum(G_prec)) %>% distinct() %>% pivot_wider(names_from = "sampleid", values_from = "sum_prec", values_fill = 0)
+
+#write_csv(genusplot_order, 'GTDBgenus_figure_order_wide.csv')
+genusCOLplot.order <-read_csv('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/GTDBgenusCOLsup_figure_order_wide2.csv')
+na.omit(genusCOLplot.order)
+genusplot_final_vec<- genusCOLplot.order$color
+names(genusplot_final_vec) <- genusCOLplot.order$genus.x
+genus.order_vec<- genusCOLplot.order$genus.x
+names(genus.order_vec) <- genusCOLplot.order$genus.x
+
+#genus.abund <- genus.abund %>% left_join(METAG_metadata, by = 'sampleid')
+#genus.abund <- genus.abund %>% unite('colT', c(time_point, donor), remove=FALSE, sep='_')
+Treat_Genus2 <- ggplot(ASV_data_plot, aes(x=colony, y=ra.percent, fill = factor(genus.x, levels=c(genus.order_vec)))) + 
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment), vars(time)) + ###might not work
+theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values=genusplot_final_vec, name='genus') +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=6))+
+theme(legend.position = "right") +
+guides(fill=guide_legend(ncol=2)) +    
+theme_bw() +
+theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_text(angle = 65, vjust = 0.6)) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+##scale_fill_manual(palette = "Set1", "Family level") +
+labs(title = "Relative abundance to genus level") + 
+xlab("Donor Colony") +
+ylab("Relative Abundance (%)")
+Treat_Genus2
+
+
+
+###to make smaller legend (subset)
+###to make legend show only top abundant ASVs (Massilia to Endozoic)
+order_legend_color <- genusCOLplot.order[c(30:49),1]
+order_genus <- order_legend_color %>% pull(genus.x)
+
+na.omit(order_genus)
+order_genus
+
+treat_Genus3 <- ggplot(ASV_data_plot, aes(x=colony, y=ra.percent, fill = factor(genus.x, levels=c(genus.order_vec)))) +
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment), vars(time)) + 
+   scale_fill_manual(values=genusplot_final_vec, name='genus.x', breaks = order_genus) +
+#theme(axis.text.x = element_text(angle = 90)) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=5))+
+theme(legend.position = "right")+
+guides(fill=guide_legend(ncol=1))+    
+#change legend key width
+theme_bw() +
+  theme(legend.text = element_text(face = "italic")) + 
+#theme(axis.text.x = element_blank())+
+#theme(axis.title.x = element_blank())+
+  theme(axis.text.y = element_blank())+
+theme(axis.title.y = element_blank())+
+  theme(legend.key.size = unit(0.4, 'cm'), #change legend key size
+        legend.key.height = unit(0.4, 'cm'), #change legend key height
+        legend.key.width = unit(0.4, 'cm'))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+treat_Genus3
+
+ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/GTDB/genusRA.pdf', height=5, width=6, treat_Genus3)
+```
+### beta diversity ============================================================
+```{r, ASV table - only relative abundance - for SIMPER, CORE and RA plots}
+#To create a dataframe = ASV table with the GID as row names and add taxonomy to export to Excel to do PAST stats
+library(dplyr)
+library(tidyverse)
+
+ASV <- ASV_data_long_norm %>% select('sampleid', 'GID', 'ra.percent') %>% spread(key = sampleid, value=ra.percent, fill=0)
+ASV2 <- ASV %>% separate(GID, c('genus','ID'), remove=FALSE, sep='/')
+#ASV3 <- ASV2 %>% left_join(taxonomy, c("ID"="ASV_ID"))
+ASV.matrix <- as.matrix(ASV2[,-c(1:3)]) 
+row.names(ASV.matrix) <- paste0(ASV$GID)
+###to remove columns with total equal to 0 or with NA an create a new matrix with these columns
+ASV.matrix.nz <- ASV.matrix[,colSums(ASV.matrix)!=0] 
+
+
+#To create a datframe with the METAG_metadata with the sampleid as row names
+rownames(METAG_metadata) <- METAG_metadata$sampleid
+data2 <- as.data.frame(ASV.matrix)
+#write_csv(data2, "ASVmatrix.csv")
+env.data = sample_data(data.frame(METAG_metadata))
+row.names(env.data) <- paste0(METAG_metadata$sampleid)
+
+#r, taxonomy table
+#To create a dataframe with the taxonomy information with the GID as rows names 
+rownames(taxonomy) <- taxonomy$GID
+tax<-as.matrix(taxonomy)
+tax2<-tax[1:nrow(tax), 3:9]
+#r, physeq object
+library(phyloseq)
+ASV = otu_table(ASV.matrix.nz, taxa_are_rows = TRUE)
+TAX = tax_table(tax2)
+physeq1 = phyloseq(ASV, TAX)
+physeq2 = merge_phyloseq(physeq1, env.data)
+```
+### bray curtis and nmds ============================================================
+```{r, to subset PHYOSEQ samples so stats are only performed addressing the questions you are trying to ask (i.e. does microme change significantly over time within outplants at sandbox}
+physeq3<- subset_samples(physeq2, treatment != "reef0")
+physeq3<- subset_samples(physeq3, treatment != "reef6m")
+
+```
+
+```{r, Core microbiota analysis}
+#If you only need the names of the core taxa, do as follows. This returns the taxa that exceed the given prevalence and detection thresholds.
+#cManager::install("microme")
+#install.packages("microme")
+#install.packages("ade4")  #dependent for microme
+library(microme)
+core.taxa.Metal <- core_members(Metal, detection = 0.1/100, prevalence = 90/100)
+core.taxa.Source <- core_members(Source, detection = 0.1/100, prevalence = 90/100) 
+core.taxa.Plastic <- core_members(Plastic, detection = 0.1/100, prevalence = 90/100) ## prevalence = 90% means it needs to be 
+# give you a list of the core ASVs
+### > core.taxa.Source    "g__Synechococcus_CC9902/f2b28cfcc58ed1198c7c96640dd651f7"
+```
+
+```{r, to save ASV file for PAST}
+
+ASV_data_long_norm <- ASV_data_long_norm %>% filter(!tie %in% "n/a")
+ASV_data_long_norm <- ASV_data_long_norm %>% filter(!tp %in% "n/a")
+
+
+ASV_norm.sub = subset(ASV_data_long_norm, select = c(GID, sampleid, ra.percent))
+ASV_norm.wide <- reshape2::dcast(ASV_norm.sub, sampleid~GID, value.var = "ra.percent", fill=0)
+
+rowSums(ASV_norm.wide[,-c(1)])
+ASV_norm.wide.nmds2 <- ASV_norm.wide[,-c(1)]
+rownames(ASV_norm.wide.nmds2)<-ASV_norm.wide$sampleid
+
+ASV_norm.widemeta <- ASV_norm.wide %>% left_join(METAG_metadata)
+#write_csv(ASV_norm.widemeta, 'FINAL_ASVtable2.csv')
+
+```
+### nmds plots + permanova =========================================================================
+```{r, to make nMDS for nursery vs source}
+ASV_data_long_norm20 <- ASV_data_long_norm20 %>% filter(!treatment %in% c("reef0"))
+ASV_data_long_norm20 <- ASV_data_long_norm20 %>% filter(!treatment %in% c("reef6m"))
+
+ASV_norm20.sub = subset(ASV_data_long_norm20, select = c(GID, sampleid, ra.Norm))
+ASV_norm20.wide <- reshape2::dcast(ASV_norm20.sub, sampleid~GID, value.var = "ra.Norm", fill=0)
+
+rowSums(ASV_norm20.wide[,-c(1)])
+ASV_norm20.wide.nmds2 <- ASV_norm20.wide[,-c(1)]
+rownames(ASV_norm20.wide.nmds2)<-ASV_norm20.wide$sampleid
+
+ASV_norm20.widemeta <- ASV_norm20.wide %>% left_join(METAG_metadata)
+#write_csv(ASV_norm20.widemeta, 'FINAL_ASVtable.csv')
+#now ready for the NMDS
+ASV_nmds.sqrt<-sqrt(ASV_norm20.wide.nmds2)
+library(data.table)
+ASV_stats<-setDT(ASV_nmds.sqrt, keep.rownames = "sampleid")
+
+# Calculate rank correlations for different distance measures - to sit which best suits your data
+#rank.totus <- rankindex(veg = as.matrix(ASV_norm20.wide2), indices = c("bray", "euclid", "manhattan", "horn"), method = "ASV_spearman")
+# Summarize the rank correlations
+#summary(rank.totus)
+
+#print(paste("The highest rank was given by the", names(sort(rank.totus, decreasing = TRUE)[1]), "method."))
+#row.names(nmds.sqrt) <- nmds.sqrt$sampleid
+ASV_nmds.sqrt <- ASV_nmds.sqrt[,-c(1)]
+
+ASV_nmds.sqrt.nMDS<-metaMDS(ASV_nmds.sqrt,distance = "bray", try =99, trymax=100, autotransform = F)
+ASV_nmds.sqrt.nMDS
+stressplot(ASV_nmds.sqrt.nMDS)
+plot(ASV_nmds.sqrt.nMDS)
+names(ASV_nmds.sqrt.nMDS)
+ASV_nmds.sqrt.points<-cbind(ASV_norm20.wide[,c(1)], as.data.frame(ASV_nmds.sqrt.nMDS$points))
+colnames(ASV_nmds.sqrt.points)[1] <- "sampleid"
+ASV_nmds.sqrt.points <- ASV_nmds.sqrt.points %>% left_join(METAG_metadata)
+
+```
+### pairwise adonis for bray distances====
+```{r, PAIRWISE ADONIS FOR BRAY DISTANCES}
+library(vegan)
+ASV_nmds.sqrt<-sqrt(ASV_norm20.wide.nmds2)
+
+ASV_codes.list<- subset(ASV_stats, select = c(sampleid))
+#to make the rownames a column again
+
+ASV_nmds.sqrt$sampleid <- rownames(ASV_nmds.sqrt) 
+
+ASV_codes.list2<-distinct(ASV_codes.list)
+ASV_codes.list2<-ASV_codes.list2 %>% arrange(ASV_codes.list2)
+ASV_list.meta <-ASV_codes.list2 %>% left_join(METAG_metadata)
+
+ASV_nmds.sqrt.meta <-ASV_list.meta %>% left_join(ASV_nmds.sqrt)
+
+ASV_sqrt.meta.mat<-as.matrix(ASV_nmds.sqrt.meta[,-c(1:5)])
+rownames(ASV_sqrt.meta.mat) <- ASV_nmds.sqrt.meta$sampleid;
+
+bray.dist<-vegdist(ASV_sqrt.meta.mat, method='bray')
+adonis.res <- adonis2(bray.dist~treatment, data=ASV_nmds.sqrt.meta, permutations =9999, method="bray")
+adonis.res
+all_coralpairwise.res <- pairwise.adonis(bray.dist, ASV_nmds.sqrt.meta$treatment,
+                                 p.adjust.m = "fdr")
+summary.pwadonis(all_coralpairwise.res)
+
+
+
+ASVpairwise.res2 <- pairwise.adonis(ASV_sqrt.meta.mat, ASV_nmds.sqrt.meta$treatment,
+                                 p.adjust.m = "fdr") 
+
+summary.pwadonis(ASVpairwise.res2)
+
+
+##to do main test with strata - blocks by colony (to account for repeated measures in source colonies over time)
+main_treatment <- adonis(ASV_sqrt.meta.mat ~ ASV_nmds.sqrt.meta$treatment, method = "bray",
+                         # strata=ASV_nmds.sqrt.meta$colony, 
+                           permutations = 9999, p.adjust.m = "fdr")
+
+
+###create df with factors in this case colony and tie_day
+fac <- data.frame(colony=ASV_nmds.sqrt.meta$colony, treatment =ASV_nmds.sqrt.meta$treatment)
+#PAIRWISEjust tie_day with colony blocked together
+pairwise.res3 <- pairwise.adonis2(ASV_sqrt.meta.mat ~ treatment, data=fac,
+                                       strata = "colony",p.adjust.m = "fdr")
+pairwise.res3
+
+
+
+```
+
+```{r, PLOT nMDS for treatment}
+library(tidyverse)
+ASV_nmds.sqrt.points$colony <- as.factor(ASV_nmds.sqrt.points$colony)
+METAG_metadata$time <- as.factor(METAG_metadata$time)
+
+ ASVMDS.vegan2 <- ggplot(ASV_nmds.sqrt.points) + 
+  geom_point(aes(x = MDS1, y = MDS2, color = treatment), size = 8) +
+  geom_text(aes(x = MDS1, y = MDS2, label = colony), hjust = 2, vjust = 2, size = 3) +
+  theme_bw()
+ASVMDS.vegan2
+
+ASVMDS.vegan22 <- ASVMDS.vegan2 + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + guides(size = FALSE) +
+  labs(title= 'ASV: Bray nMDS_metaG')+
+  scale_colour_manual(values=c(`reef0`="#E0E526",`reef6m`="#19D609", `mars`="#09ABD6", `nursery`="#E58826", `rebar`="#581845"))+
+    guides(color = guide_legend("treatment",override.aes = list(size = 8)))+
+  guides(shape = guide_legend("time",override.aes = list(size=6)))+
+  theme(legend.text=element_text(size=11))
+ASVMDS.vegan22
+ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try3/plots/metaG_nMDS_propagules.pdf', height=4, width=6)
+
+```
+## FUNCTION
+```{r, To load the data, remove the unassigned from the domain column and remove contaminants}
+setwd("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis")
+METAG_metadata <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/METAG_metadata.csv")
+FUNCTION.tab <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/norm_KEGGtable.csv")
+KEGG_taxa <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/keggtaxonomy.csv")
+
+KEGG.meta <- FUNCTION.tab  %>% left_join(KEGG_taxa, by = "KEGG_ID")
+KEGG.filter <-KEGG.meta %>% filter(!KEGG_ID %in% c("Unclassified")) 
+##filter based on partial text match
+df_filteredPath <- KEGG.filter[grep("Photosynthesis", KEGG.filter$Path),]
+df_filteredName <- KEGG.filter[grep("Unclassified", KEGG.filter$Name),]
+
+# Remove rows from KEGG.meta where KEGG_ID is present in df_filteredPath
+filtered_meta <- anti_join(KEGG.filter, df_filteredPath, by = "KEGG_ID")
+KEGG.filter <- filtered_meta
+##all gain/loss KO
+
+KEGG.filter<-KEGG.meta%>%filter(KEGG_ID%in%c("K02303","K02319","K04656","K16053","K00798","K01665","K01693","K02228","K02742",
+"K03184","K03635","K04368","K06024","K06190","K07259","K08968","K09861","K10407",
+"K13117","K18456","K19416","K19737","K01654","K07493","K14287","K15984","K02036",
+"K02170","K03742","K03897","K07235","K09781","K09908","K13040","K13566","K20528",
+"K00997","K01452","K01750","K03179","K03284","K08177","K09858","K10819","K18307",
+"K18716","K22042","K03812","K10229","K00322","K00336","K01409","K02031","K02204",
+"K02874","K03533","K04046","K05596","K05807","K15270","K21025"))
+##to subset only to KEGGS related to iron - ONLY DO THIS STEP IF LOOKING JUST AT IRON
+KEGG.filter <- KEGG.meta %>% filter(KEGG_ID %in% c("K01637",
+"K01681", "K01682",
+"K02010", "K02011", "K02012", "K02013", "K11710",
+"K07224",  "K11604", "K11605", "K11606", "K11607", "K11707", "K16301", "K04758", "K04759",
+"K02003", "K02014", "K02015", "K02016", "K02074", "K02075", "K02077", "K03559", "K03560", "K03832", #"K06858", "K16087", "K16088", "K16089","K00230","K07243","K06205",
+ "K00380", "K03809", "K03839","K03840", "K05524",  "K12264",
+"K00522", "K02217", "K02255", "K03594", "K04047",
+"K003010"))
+```
+
+```{r, To create a taxonomy table and create a Genus/ID column  or Family/ID}
+#To select only the taxonomy information
+taxonomy <- KEGG.filter %>% select(c(1, 17:18))
+
+taxonomy$Name <- forcats::fct_explicit_na(taxonomy$Name, 'Name_unassigned')
+taxonomy$Path<- forcats::fct_explicit_na(taxonomy$Path, 'Path_unassigned')
+taxonomy <- taxonomy %>% 
+  mutate(KEGG_NAME = paste(KEGG_ID, Name, sep = "_"))
+
+```
+
+```{r, To make the data into long form for plots - KEGG data in tpm has already been normalised}
+
+# Unite KEGG_ID and Name into a new column called KEGG_NAME
+KEGG.filter2 <- unite(KEGG.filter, "KEGG_NAME", KEGG_ID, Name, sep = "_")
+
+#####FOR KEGG_NAME
+# Unite KEGG_ID and Path into a new column called KEGG_NAME
+#KEGG.filter2 <- unite(KEGG.filter, "KEGG_NAME", Path, KEGG_ID, sep = "_")
+KEGG <- KEGG.filter2 %>% select(c(1:16))
+KEGID <- taxonomy %>% select("KEGG_NAME")
+KEGG <- KEGG  %>% left_join(KEGID, by = 'KEGG_NAME')
+## to make the data in long format
+KEGG_data_long_norm <- KEGG %>% gather(key = "sampleid", value = "tpm", 2:16)
+KEGG_data_plot_norm <- KEGG_data_long_norm
+KEGG_data_plot_norm <- KEGG_data_long_norm %>% left_join(METAG_metadata, c("sampleid"="sampleid"))
+#KEGG_data_plot <- KEGG_data_plot %>% unite('colT', c(time, colony), remove=FALSE, sep='_')
+
+####to look at pathways not KOs
+KEGG_data_long_tax <- KEGG_data_long_norm  %>% left_join(taxonomy, by = 'KEGG_NAME')
+
+KEGG_Pathsum <- KEGG_data_long_tax %>% 
+  group_by(sampleid, Path) %>% 
+  summarise(sum_tpm = sum(tpm))
+
+###FOR KEGG_ID
+KEGG <- KEGG.filter %>% select(c(1:16))
+KEGID <- taxonomy %>% select("KEGG_ID")
+KEGG <- KEGG  %>% left_join(KEGID, by = 'KEGG_ID')
+## to make the data in long format
+KEGG_data_long_norm <- KEGG %>% gather(key = "sampleid", value = "tpm", 2:16)
+KEGG_data_plot_norm <- KEGG_data_long_norm
+KEGG_data_plot_norm <- KEGG_data_long_norm %>% left_join(METAG_metadata, c("sampleid"="sampleid"))
+#KEGG_data_plot <- KEGG_data_plot %>% unite('colT', c(time, colony), remove=FALSE, sep='_')
+
+####to look at pathways not KOs
+KEGG_data_long_tax <- KEGG_data_long_norm  %>% left_join(taxonomy, by = 'KEGG_ID')
+
+KEGG_Pathsum <- KEGG_data_long_tax %>% 
+  group_by(sampleid, Path) %>% 
+  summarise(sum_tpm = sum(tpm))
+
+
+
+```
+
+```{r, identify outliers}
+KEGG_data_long_out <- KEGG_data_plot_norm %>% 
+  group_by(KEGG_ID) %>% 
+  identify_outliers(tpm)
+# create a list of rows to remove based on KEGG_ID and sample_id where is.extreme is TRUE
+rows_to_remove <- KEGG_data_long_out %>%
+  filter(is.extreme == TRUE) %>%
+  select(KEGG_ID, sampleid) %>%
+  distinct()
+
+# remove the rows from KEGG_data_plot_norm
+KEGG_data_plot_norm_filtered <- KEGG_data_plot_norm %>%
+  anti_join(rows_to_remove, by = c("KEGG_ID", "sampleid"))
+
+KEGG_data_plot_norm <- KEGG_data_plot_norm_filtered
+```
+## Fig 5a. Gain/Loss analysis
+```{r, to do gain analysis - mars}
+
+ASV_data_plot1 <- ASV_data_plot1 %>% filter(!sampleid %in% "Nurs5")
+
+ASV_data_plot_norm <- left_join(ASV_data_plot1,taxonomy)
+mars_100_KO<- subset(ASV.filtered2, Mars2 > 0 & Mars4 > 0 & Mars5 > 0)
+
+# Calculate the sum of ra.percent for each GID across colonies 1, 2, and 3 in reef6m
+reef6m_sum <- aggregate(ra.percent ~ GID, data = subset(ASV_data_plot_norm, treatment == "reef6m" & colony %in% c(1, 2,3,4,5)), sum)
+
+# Subset ASV_data_plot_norm where the sum of ra.percent is equal to 0
+reef6m_0_KO <- subset(ASV_data_plot_norm, treatment == "reef6m" & ASV_data_plot_norm$GID %in% reef6m_sum$GID[reef6m_sum$ra.percent == 0])
+
+mars_100_KO_gain <- subset(mars_100_KO, ASV_ID %in% reef6m_0_KO$ASV_ID)
+
+marsASV_data_gain <- subset(ASV_data_plot_norm, ASV_ID %in% mars_100_KO_gain$ASV_ID)
+
+library(ggplot2)
+
+marsASV_data_gain_sub <- subset(marsASV_data_gain, treatment %in% c("mars", "reef6m"))
+```
+```{r, to do loss analysis - mars}
+
+reef6m_100_KO<- subset(ASV.filtered2, Par1_6m > 0 & Par2_6m > 0 & Par3_6m > 0 & Par4_6m > 0 & Par5_6m)
+
+# Calculate the sum of ra.percent for each GID across colonies 1, 2, and 3 in reef6m
+mars_sum <- aggregate(ra.percent ~ GID, data = subset(ASV_data_plot_norm, treatment == "mars" & colony %in% c(2, 4, 5)), sum)
+
+# Subset ASV_data_plot_norm where the sum of ra.percent is equal to 0
+mars_0_KO <- subset(ASV_data_plot_norm, treatment == "mars" & ASV_data_plot_norm$GID %in% mars_sum$GID[mars_sum$ra.percent == 0])
+
+mars_100_KO_loss <- subset(reef6m_100_KO, ASV_ID %in% mars_0_KO$ASV_ID)
+
+marsASV_data_loss <- subset(ASV_data_plot_norm, ASV_ID %in% mars_100_KO_loss$ASV_ID)
+
+library(ggplot2)
+
+marsASV_data_loss_sub <- subset(marsASV_data_loss, treatment %in% c("mars", "reef6m"))
+
+##combine loss and gain datasets and plot heatmap
+marsASV_data_gainLOSS <- rbind(marsASV_data_gain_sub,marsASV_data_loss_sub)
+
+# Define the desired order of variables
+var_order <- c("reef6m", "mars")
+# Convert variable column to factor with desired order
+marsASV_data_gainLOSS$treatment <- factor(marsASV_data_gainLOSS$treatment, levels = var_order)
+
+# Calculate average ra.percent value for each GID in the mars treatment
+mars_avg_ra.percent <- marsASV_data_gainLOSS %>%
+  filter(treatment == "mars") %>%
+  group_by(GID) %>%
+  summarise(avg_ra.percent = mean(ra.percent))
+
+# Reorder GIDs based on average ra.percent value in the mars treatment
+marsASV_data_gainLOSS$GID <- factor(marsASV_data_gainLOSS$GID,
+                                           levels = mars_avg_ra.percent %>% arrange(avg_ra.percent) %>% pull(GID))
+marsASV_data_gainLOSS <- marsASV_data_gainLOSS %>% 
+  unite(tr_col, treatment, colony, sep = "_",remove = FALSE)
+# Create the heatmap
+# Define the desired order of variables
+var_order <- c("reef6m_1","reef6m_2","reef6m_3","mars_2","mars_4","mars_5")
+# Convert variable column to factor with desired order
+marsASV_data_gainLOSS$tr_col <- factor(marsASV_data_gainLOSS$tr_col, levels = var_order)
+
+
+marsGAINLOSSplot <- ggplot(marsASV_data_gainLOSS, aes(x = tr_col, y = GID, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+marsGAINLOSSplot
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/Plots/gainlossmars.pdf', height=5, width=7)
+mars_100_KO_loss2 <- subset(nursery_0_KO, ASV %in% mars_100_KO$ASV)
+mars_100_KO_loss3 <- subset(rebar_0_KO, ASV %in% mars_100_KO_loss2$ASV)
+mars_100_KO_loss4 <- subset(reef6m_0_KO, ASV %in% mars_100_KO_loss3$ASV)
+
+marsASV_data_loss <- subset(ASV_data_plot_norm, ASV %in% mars_100_KO_gain$ASV)
+
+library(ggplot2)
+
+marsASV_data_loss_sub <- subset(marsASV_data_loss, treatment %in% c("mars", "reef6m"))
+
+
+nurseryASV_data_loss <- subset(ASV_data_plot_norm, ASV_ID %in% nursery_100_KO_loss$ASV_ID)
+
+```
+
+```{r, to do gain analysis - rebar}
+
+rebar_100_KO<- subset(ASV.filtered2, Reb1 > 0 & Reb2 > 0 & Reb3 > 0 & Reb4 >0 & Reb5>0 & Reb6 >0)
+
+# Calculate the sum of ra.percent for each GID across colonies 1, 2, and 3 in reef6m
+reef6m_sum <- aggregate(ra.percent ~ GID, data = subset(ASV_data_plot_norm, treatment == "reef6m" & colony %in% c(1, 2, 3,4,5)), sum)
+
+# Subset ASV_data_plot_norm where the sum of ra.percent is equal to 0
+reef6m_0_KO <- subset(ASV_data_plot_norm, treatment == "reef6m" & ASV_data_plot_norm$GID %in% reef6m_sum$GID[reef6m_sum$ra.percent == 0])
+
+rebar_100_KO_gain <- subset(rebar_100_KO, ASV_ID %in% reef6m_0_KO$ASV_ID)
+
+rebarASV_data_gain <- subset(ASV_data_plot_norm, ASV_ID %in% rebar_100_KO_gain$ASV_ID)
+
+library(ggplot2)
+
+rebarASV_data_gain_sub <- subset(rebarASV_data_gain, treatment %in% c("rebar", "reef6m"))
+```
+```{r, to do loss analysis - rebar}
+
+reef6m_100_KO<- subset(ASV.filtered2, Par1_6m > 0 & Par2_6m > 0 & Par3_6m > 0 & Par4_6m > 0 & Par5_6m)
+
+# Calculate the sum of ra.percent for each GID across colonies 1, 2, and 3 in reef6m
+rebar_sum <- aggregate(ra.percent ~ GID, data = subset(ASV_data_plot_norm, treatment == "rebar" & colony %in% c(1,2,3, 4, 5,6)), sum)
+
+# Subset ASV_data_plot_norm where the sum of ra.percent is equal to 0
+rebar_0_KO <- subset(ASV_data_plot_norm, treatment == "rebar" & ASV_data_plot_norm$GID %in% rebar_sum$GID[rebar_sum$ra.percent == 0])
+
+rebar_100_KO_loss <- subset(reef6m_100_KO, ASV_ID %in% rebar_0_KO$ASV_ID)
+
+rebarASV_data_loss <- subset(ASV_data_plot_norm, ASV_ID %in% rebar_100_KO_loss$ASV_ID)
+
+library(ggplot2)
+
+rebarASV_data_loss_sub <- subset(rebarASV_data_loss, treatment %in% c("rebar", "reef6m"))
+##combine loss and gain datasets and plot heatmap
+rebarASV_data_gainLOSS <- rbind(rebarASV_data_gain_sub,rebarASV_data_loss_sub)
+
+
+# Define the desired order of variables
+var_order <- c("reef6m", "rebar")
+# Convert variable column to factor with desired order
+rebarASV_data_gainLOSS$treatment <- factor(rebarASV_data_gainLOSS$treatment, levels = var_order)
+
+# Calculate average ra.percent value for each GID in the rebar treatment
+rebar_avg_ra.percent <- rebarASV_data_gainLOSS %>%
+  filter(treatment == "rebar") %>%
+  group_by(GID) %>%
+  summarise(avg_ra.percent = mean(ra.percent))
+
+# Reorder GIDs based on average ra.percent value in the rebar treatment
+rebarASV_data_gainLOSS$GID <- factor(rebarASV_data_gainLOSS$GID,
+                                           levels = rebar_avg_ra.percent %>% arrange(avg_ra.percent) %>% pull(GID))
+
+# Create the heatmap
+rebarGAINLOSSplot <- ggplot(rebarASV_data_gainLOSS, aes(x = treatment, y = GID, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+rebarGAINLOSSplot
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/Plots/gainlossrebar.pdf', height=5, width=7)
+
+```
+
+```{r, to do gain analysis - nursery}
+
+nursery_100_KO<- subset(ASV.filtered2, Nurs2 > 0 & Nurs3 > 0 & Nurs4 > 0 & Nurs5 > 0)
+
+# Calculate the sum of ra.percent for each GID across colonies 1, 2, and 3 in reef6m
+reef6m_sum <- aggregate(ra.percent ~ GID, data = subset(ASV_data_plot_norm, treatment == "reef6m" & colony %in% c(1, 2, 3,4,5)), sum)
+
+# Subset ASV_data_plot_norm where the sum of ra.percent is equal to 0
+reef6m_0_KO <- subset(ASV_data_plot_norm, treatment == "reef6m" & ASV_data_plot_norm$GID %in% reef6m_sum$GID[reef6m_sum$ra.percent == 0])
+
+nursery_100_KO_gain <- subset(nursery_100_KO, ASV_ID %in% reef6m_0_KO$ASV_ID)
+
+nurseryASV_data_gain <- subset(ASV_data_plot_norm, ASV_ID %in% nursery_100_KO_gain$ASV_ID)
+
+library(ggplot2)
+
+nurseryASV_data_gain_sub <- subset(nurseryASV_data_gain, treatment %in% c("nursery", "reef6m"))
+
+```
+```{r, to do loss analysis - nursery}
+
+reef6m_100_KO<- subset(ASV.filtered2, Par1_6m > 0 & Par2_6m > 0 & Par3_6m > 0 & Par4_6m > 0 & Par5_6m)
+
+# Calculate the sum of ra.percent for each GID across colonies 1, 2, and 3 in reef6m
+nursery_sum <- aggregate(ra.percent ~ GID, data = subset(ASV_data_plot_norm, treatment == "nursery" & colony %in% c(2, 3,4, 5)), sum)
+
+# Subset ASV_data_plot_norm where the sum of ra.percent is equal to 0
+nursery_0_KO <- subset(ASV_data_plot_norm, treatment == "nursery" & ASV_data_plot_norm$GID %in% nursery_sum$GID[nursery_sum$ra.percent == 0])
+
+nursery_100_KO_loss <- subset(reef6m_100_KO, ASV_ID %in% nursery_0_KO$ASV_ID)
+
+nurseryASV_data_loss <- subset(ASV_data_plot_norm, ASV_ID %in% nursery_100_KO_loss$ASV_ID)
+
+library(ggplot2)
+
+nurseryASV_data_loss_sub <- subset(nurseryASV_data_loss, treatment %in% c("nursery", "reef6m"))
+
+
+##combine loss and gain datasets and plot heatmap
+nurseryASV_data_gainLOSS <- rbind(nurseryASV_data_gain_sub,nurseryASV_data_loss_sub)
+
+
+# Define the desired order of variables
+var_order <- c("reef6m", "nursery")
+# Convert variable column to factor with desired order
+nurseryASV_data_gainLOSS$treatment <- factor(nurseryASV_data_gainLOSS$treatment, levels = var_order)
+# Calculate average ra.percent value for each GID in the nursery treatment
+nursery_avg_ra.percent <- nurseryASV_data_gainLOSS %>%
+  filter(treatment == "nursery") %>%
+  group_by(GID) %>%
+  summarise(avg_ra.percent = mean(ra.percent))
+
+# Reorder GIDs based on average ra.percent value in the nursery treatment
+nurseryASV_data_gainLOSS$GID <- factor(nurseryASV_data_gainLOSS$GID,
+                                           levels = nursery_avg_ra.percent %>% arrange(avg_ra.percent) %>% pull(GID))
+
+# Create the heatmap
+nurseryGAINLOSSplot <- ggplot(nurseryASV_data_gainLOSS, aes(x = treatment, y = GID, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+nurseryGAINLOSSplot
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/Plots/gainlossnursery.pdf', height=5, width=10)
+
+```
+
+```{r, treatment_col combined HEATMAP gainloss}
+# Merge the four data frames by their GID column
+
+merged_GAINLOSS <- rbind(nurseryASV_data_gainLOSS, marsASV_data_gainLOSS, 
+                           rebarASV_data_gainLOSS)
+
+# Define the desired order of variables
+var_order <- c("Par1_6m","Par2_6m","Par3_6m", "Par4_6m","Par5_6m","Mars2", "Mars4","Mars5","Reb1","Reb2","Reb3","Reb4","Reb5","Reb6","Nurs2","Nurs3","Nurs4","Nurs5")
+# Convert variable column to factor with desired order
+merged_GAINLOSS$sampleid <- factor(merged_GAINLOSS$sampleid, levels = var_order)
+
+# Calculate average ra.percent value for each GID in the mars treatment
+merged_avg_ra.percent <- merged_GAINLOSS %>%
+  filter(treatment == "reef6m") %>%
+  group_by(GID) %>%
+  summarise(avg_ra.percent = mean(ra.percent))
+
+# Reorder GIDs based on average ra.percent value in the mars treatment
+merged_GAINLOSS$GID <- factor(merged_GAINLOSS$GID,
+                                           levels = merged_avg_ra.percent %>% arrange(avg_ra.percent) %>% pull(GID))
+merged_GAINLOSS <- left_join(merged_GAINLOSS,taxonomy, by = "ASV_ID")
+merged_GAINLOSS_max <- merged_GAINLOSS %>%
+  group_by("genus/ASV") %>%
+  summarise(max_ra.percent = max(ra.percent))
+
+# Create the heatmap
+merged_0_0.5GAINLOSSplot <- ggplot(merged_GAINLOSS, aes(x = sampleid, y = GID.y, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "#FFFFFF", mid = "#054580", high = "#F57575", limits = c(0, 6), midpoint = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+
+merged_0_0.5GAINLOSSplot
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try4/plots/T6m plots/gainloss_0-0.5_ALL.pdf', height=8, width=10)
+# Create the heatmap
+merged_0.5_1.4GAINLOSSplot <- ggplot(merged_GAINLOSS_filtered, aes(x = tr_col, y = GID.y, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low ="#F57575" ,mid = "#FE0000", high = "#690303", limits = c(0.5, 1.4), midpoint = 1) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+
+merged_0.5_1.4GAINLOSSplot
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try4/plots/T6m plots/gainloss_0.5-1.4_ALL.pdf', height=8, width=10)
+
+
+```
+
+```{r, treatment_col combined HEATMAP gainloss}
+# Merge the four data frames by their GID column
+
+merged_GAINLOSS <- rbind(nurseryASV_data_gainLOSS, marsASV_data_gainLOSS, 
+                           rebarASV_data_gainLOSS,rebmarsASV_data_gainLOSS,nursmarsASV_data_gainLOSS)
+
+# Define the desired order of variables
+var_order <- c("Par2_6m","Par3_6m", "Par4_6m","Par5_6m","Mars2", "Mars4","Mars5","Reb1","Reb2","Reb3","Reb4","Reb5","Reb6","Nurs2","Nurs3","Nurs4","Nurs5")
+# Convert variable column to factor with desired order
+merged_GAINLOSS$sampleid <- factor(merged_GAINLOSS$sampleid, levels = var_order)
+
+# Calculate average ra.percent value for each GID in the mars treatment
+merged_avg_ra.percent <- merged_GAINLOSS %>%
+  filter(treatment == "reef6m") %>%
+  group_by(GID) %>%
+  summarise(avg_ra.percent = mean(ra.percent))
+
+# Reorder GIDs based on average ra.percent value in the mars treatment
+merged_GAINLOSS$GID <- factor(merged_GAINLOSS$GID,
+                                           levels = merged_avg_ra.percent %>% arrange(avg_ra.percent) %>% pull(GID))
+merged_GAINLOSS <- left_join(merged_GAINLOSS,taxonomy)
+merged_GAINLOSS_max <- merged_GAINLOSS %>%
+  group_by("genus/ASV") %>%
+  summarise(max_ra.percent = max(ra.percent))
+
+# Create the heatmap
+merged_0_0.5GAINLOSSplot <- ggplot(merged_GAINLOSS, aes(x = sampleid, y = ASV, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "#FFFFFF", mid = "#054580", high = "#F57575", limits = c(0, 6), midpoint = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+
+merged_0_0.5GAINLOSSplot
+
+ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try4/plots/T6m plots/gainloss_0-0.5_ALL.pdf', height=8, width=10)
+# Create the heatmap
+merged_0.5_1.4GAINLOSSplot <- ggplot(merged_GAINLOSS_filtered, aes(x = tr_col, y = GID, fill = ra.percent)) + 
+  geom_tile() +
+  scale_fill_gradient2(low ="#F57575" ,mid = "#FE0000", high = "#690303", limits = c(0.5, 1.4), midpoint = 1) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "ASV Gain-Loss Heatmap", x = "Treatment", y = "ASV Name", fill = "ra.percent")
+
+merged_0.5_1.4GAINLOSSplot
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try4/plots/T6m plots/gainloss_0.5-1.4_ALL.pdf', height=8, width=10)
+
+
+```
+## Fig 5b-c. and S6. Pathway bar plots
+```{r, Fig 5 b-c. load pathway data}
+
+setwd("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/MetaG")
+METAG_metadata <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/MetaG/METAG_metadata.csv")
+pathbar <- read_csv("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/MetaG/path_barplot2.csv")
+```
+
+```{r, Fig 5 b-c. metabolism bar plot}
+###
+pathbar_long <- pathbar %>% gather(key = "sampleid", value = "abund", 2:16)
+
+pathbar_long <-pathbar_long %>% left_join(METAG_metadata)
+##function for std
+std <- function(x) sd(x)/sqrt(length(x))
+
+###make file for line plot grouped by genus
+ASV_data_plot_line <- pathbar_long %>% group_by(Path,treatment) %>% summarise(Avg = mean(abund), Stdev = sd(abund), SEM = std(abund)) 
+
+
+# Define custom colors for each treatment group
+custom_colors <- c("mars" = "#09ABD6", "rebar" = "#7A416B", "reef6m" = "#74D669", "nursery" = "#E58826")
+
+# Define the desired order of the Path levels
+path_order <- c("Secondary metabolism",
+                "Xenobiotics biodegradation and metabolism",
+                "Metabolism of other amino acids",
+                "Glycan biosynthesis and metabolism",
+                "Lipid metabolism",
+                "Metabolism of terpenoids and polyketides",
+                "Nucleotide metabolism",
+                "Metabolism of cofactors and vitamins",
+                "Protein families: metabolism",
+                "Amino acid metabolism",
+                "Carbohydrate metabolism")
+
+# Filter the data to include only the specified Path values
+filtered_data <- ASV_data_plot_line[ASV_data_plot_line$Path %in% path_order, ]
+
+# Reorder Path based on the desired order
+filtered_data$Path <- factor(filtered_data$Path, levels = path_order)
+filtered_data <- filtered_data[filtered_data$treatment != "reef0", ]
+# Define the order of treatments
+treatment_order <- c("reef6m", "nursery", "mars", "rebar")
+
+# Convert treatment to a factor with the desired order
+filtered_data$treatment <- factor(filtered_data$treatment, levels = treatment_order)
+
+# Plot the bar plot with manually sorted x-axis and without gridlines
+barplot <- ggplot(filtered_data, aes(x = Path, y = Avg, fill = treatment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = Avg - SEM, ymax = Avg + SEM), width = 0.2, position = position_dodge(0.9)) +
+  xlab("Path") +
+  ylab("TPM") +
+  ggtitle("Bar Plot of Avg by Path and Treatment") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_blank()) +
+  scale_fill_manual(values = custom_colors)
+barplot
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/16S/qiime/try4/plots/T6m plots/barplot_PATHenergy.pdf', height=8, width=6)
+
+```
+
+```{r, Fig 5 b-c. genetic bar plot}
+###
+pathbar_long <- pathbar %>% gather(key = "sampleid", value = "abund", 2:16)
+
+pathbar_long <-pathbar_long %>% left_join(METAG_metadata)
+##function for std
+std <- function(x) sd(x)/sqrt(length(x))
+
+###make file for line plot grouped by genus
+ASV_data_plot_line <- pathbar_long %>% group_by(Path,treatment) %>% summarise(Avg = mean(abund), Stdev = sd(abund), SEM = std(abund)) 
+
+
+# Define custom colors for each treatment group
+custom_colors <- c("mars" = "#09ABD6", "rebar" = "#7A416B", "reef6m" = "#74D669", "nursery" = "#E58826")
+
+# Define the desied order of the Path levels
+path_order <- c("Unclassified: genetic information processing", "Replication and repair",        "Transcription","Translation",
+                "Folding, sorting and degradation",
+                "Protein families: genetic information processing")
+
+# Filter the data to include only the specified Path values
+filtered_data <- ASV_data_plot_line[ASV_data_plot_line$Path %in% path_order, ]
+
+# Reorder Path based on the desired order
+filtered_data$Path <- factor(filtered_data$Path, levels = path_order)
+filtered_data <- filtered_data[filtered_data$treatment != "reef0", ]
+# Define the order of treatments
+treatment_order <- c("reef6m", "nursery", "mars", "rebar")
+
+# Convert treatment to a factor with the desired order
+filtered_data$treatment <- factor(filtered_data$treatment, levels = treatment_order)
+
+# Plot the bar plot with manually sorted x-axis and without gridlines
+barplot <- ggplot(filtered_data, aes(x = Path, y = Avg, fill = treatment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = Avg - SEM, ymax = Avg + SEM), width = 0.2, position = position_dodge(0.9)) +
+  xlab("Path") +
+  ylab("TPM") +
+  ggtitle("Bar Plot of Avg by Path and Treatment") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_blank()) +
+  scale_fill_manual(values = custom_colors)
+barplot
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try4/plots/T6m plots/barplot_genetic_PATH.pdf', height=4, width=6)
+
+```
+
+```{r, Fig S6. energy metabolism bar plot}
+###
+pathbar_long <- pathbar %>% gather(key = "sampleid", value = "abund", 2:16)
+
+pathbar_long <-pathbar_long %>% left_join(METAG_metadata)
+##function for std
+std <- function(x) sd(x)/sqrt(length(x))
+
+###make file for line plot grouped by genus
+ASV_data_plot_line <- pathbar_long %>% group_by(Path,treatment) %>% summarise(Avg = mean(abund), Stdev = sd(abund), SEM = std(abund)) 
+
+
+# Define custom colors for each treatment group
+custom_colors <- c("mars" = "#09ABD6", "rebar" = "#7A416B", "reef6m" = "#74D669", "nursery" = "#E58826")
+
+# Define the desired order of the Path levels
+path_order <- c("Secondary metabolism",
+                "Xenobiotics biodegradation and metabolism",
+                "Metabolism of other amino acids",
+                "Glycan biosynthesis and metabolism",
+                "Lipid metabolism",
+                "Metabolism of terpenoids and polyketides",
+                "Nucleotide metabolism",
+                "Metabolism of cofactors and vitamins",
+                "Protein families: metabolism",
+                #"Unclassified: metabolism",
+                "Amino acid metabolism",
+                "Carbohydrate metabolism")
+path_order <- c("Energy metabolism")
+
+# Filter the data to include only the specified Path values
+filtered_data <- ASV_data_plot_line[ASV_data_plot_line$Path %in% path_order, ]
+
+# Reorder Path based on the desired order
+filtered_data$Path <- factor(filtered_data$Path, levels = path_order)
+filtered_data <- filtered_data[filtered_data$treatment != "reef0", ]
+# Define the order of treatments
+treatment_order <- c("reef6m", "nursery", "mars", "rebar")
+
+# Convert treatment to a factor with the desired order
+filtered_data$treatment <- factor(filtered_data$treatment, levels = treatment_order)
+
+# Plot the bar plot with manually sorted x-axis and without gridlines
+barplot <- ggplot(filtered_data, aes(x = Path, y = Avg, fill = treatment)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = Avg - SEM, ymax = Avg + SEM), width = 0.2, position = position_dodge(0.9)) +
+  xlab("Path") +
+  ylab("TPM") +
+  ggtitle("Bar Plot of Avg by Path and Treatment") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_blank()) +
+  scale_fill_manual(values = custom_colors)
+barplot
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/16S/qiime/try4/plots/T6m plots/barplot_PATHenergy.pdf', height=8, width=6)
+
+```
+
+```{r, Fig 5 b-c. Kruskal and Pairwise wilcox post-hoc test on each pathway}
+
+setwd("C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/MetaG")
+METAG_metadata <- read_csv("C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/MetaG/METAG_metadata.csv")
+pathtab <- read_csv("C:/Users/paige/OneDrive - UTS/4th Chapter Metal Project/Analysis/MetaG/path_table2.csv")
+
+library(dplyr)     # for data manipulation
+library(tidyr)     # for data tidying
+library(stats)     # for ANOVA
+
+
+pathtab <- left_join(pathtab,METAG_metadata)
+pathtab <-pathtab %>% filter(!treatment %in% c("reef0"))
+
+# Create empty lists to store the results
+kruskal_results <- list()
+wilcox_results <- list()
+
+# Get column names excluding the first column
+col_names <- colnames(pathtab)[2:51]
+
+# Loop over each column in the dataframe
+for (col in col_names) {
+  # Perform Kruskal-Wallis test
+  kruskal_out <- kruskal.test(pathtab[[col]] ~ pathtab$treatment)
+  kruskal_results[[col]] <- kruskal_out
+  
+  # Perform pairwise Wilcoxon test
+  wilcox_out <- pairwise.wilcox.test(pathtab[[col]], pathtab$treatment, p.adjust.method = "fdr")
+  wilcox_results[[col]] <- wilcox_out
+}
+
+# Print the results
+for (col in col_names) {
+  cat("Column:", col, "\n")
+  cat("Kruskal-Wallis test:\n")
+  print(kruskal_results[[col]])
+  cat("Pairwise Wilcoxon test:\n")
+  print(wilcox_results[[col]])
+  cat("\n")
+}
+
+
+```
+
+## Relative abundance plots (function) and nMDS 
+```{r, To relative abundance the data to the number of reads}
+
+# Calculate the total of abund only within the the samples
+KEGG_data_long <- KEGG %>% gather(key = "sampleid", value = "tpm", 2:16)
+KEGG_tot <- KEGG_data_long %>% group_by(sampleid) %>% summarise(total_tpm = sum(tpm))
+KEGG_tot <- KEGG_data_long %>% left_join(KEGG_tot, c("sampleid"="sampleid"))
+
+# Calculate of relative abundance - CHANGE KEGG_TOT_IRON BACK TO KEGG_TOT IF LOOKING AT ALL FUNCTIONS
+KEGG_data_long_RA <- mutate(KEGG_tot, ra.percent = (tpm / total_tpm)*100)
+KEGG_data_plot_RA <- KEGG_data_long_RA %>% left_join(METAG_metadata, c("sampleid"="sampleid"))
+
+```
+
+## Fig S4. Make RA plots with custom colours
+```{r, basic KEGG plot with R colours}
+KEGG_data_plot_RA$treatment <- as.character(KEGG_data_plot_RA$treatment)
+KEGG_data_plot_RA <- KEGG_data_plot_RA %>% unite('treatment_colony', c(treatment, colony), remove=FALSE, sep='_')
+library(RColorBrewer)
+KEGG_data_plot_RA <- KEGG_data_plot_RA %>% left_join(taxonomy, by = "KEGG_ID")
+##check RA percent totals one million
+PLOTKEGG_tot_check <- KEGG_data_plot_RA %>% group_by(treatment_colony) %>% summarise(tpm_tot = sum(tpm))
+
+plot_KEGGS <- ggplot(KEGG_data_plot_RA, aes(x=colony, y=ra.percent, fill = fct_reorder(KEGG_ID, ra.percent))) + 
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment), vars(time)) +
+theme(axis.text.x = element_text(angle = 90)) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=5))+
+theme(legend.position = "right") +
+guides(fill=guide_legend(ncol=3)) +    
+theme_bw() +
+theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_text(angle = 65, vjust = 0.6)) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+##scale_fill_manual(palette = "Set1", "Family level") +
+labs(title = "KEGG Plot") + 
+xlab("Donor Colony") +
+ylab("tpm")
+plot_KEGGS
+
+#ggsave('C:/Users/paige/OneDrive - UTS/1.2 degradables Project/DATA/d_RAplots_genus.svg', height=14, width=35)
+
+```
+
+```{r, to organise colours and abundance for custom RA plot}
+count <- KEGG_data_plot_RA%>% group_by(KEGG_ID) %>% summarise(remaining=sum(tpm))# maximum #? KEGGS per sample in the NOT filtered number
+KOKEGG_abund <- KEGG_data_plot_RA
+KOKEGG_abund= subset(KOKEGG_abund, select = c(sampleid, KEGG_ID, tpm, ra.percent))
+a1 <- KOKEGG_abund %>% group_by(sampleid) %>% summarise(remaining=sum(ra.percent))
+KOKEGG.abund.names <- subset(KOKEGG_abund, select = c(KEGG_ID)) %>% distinct()
+KOKEGG.abund<-KEGG_data_plot_RA %>%
+  filter(KEGG_ID %in% KOKEGG.abund.names$KEGG_ID)
+#KEGG.abund<-KEGG.abund %>% separate('KEGG_ID', c("KO", "KEGG"), remove=F, sep='/')
+KOplot_order <- KOKEGG.abund %>% group_by(KEGG_ID, sampleid) %>% summarise(sum_prec=sum(tpm)) %>% distinct() %>% pivot_wider(names_from = "sampleid", values_from = "sum_prec", values_fill = 0)
+
+#write_csv(KOplot_order, 'filterKO_figure_order_wide.csv')
+KOCOLplot.order <-read_csv('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/Analysis/filterKO_COL_fig_order_wide.csv')
+na.omit(KOCOLplot.order)
+KOplot_final_vec<- KOCOLplot.order$color
+names(KOplot_final_vec) <- KOCOLplot.order$KEGG_ID
+KO.order_vec<- KOCOLplot.order$KEGG_ID
+names(KO.order_vec) <- KOCOLplot.order$KEGG_ID
+
+###to make smaller legend (subset)
+###to make legend show only top abundant KEGGs (??)
+order_legend_color <- KOCOLplot.order[c(5062:5082),1:2]
+###for iron legend
+#order_legend_color <- KOCOLplot.order[c(10:32),1:2]
+order_KO <- order_legend_color %>% pull(KEGG_ID)
+na.omit(order_KO)
+order_KO
+
+Treat_KO2 <- ggplot(KEGG_data_plot_RA, aes(x=colony, y=ra.percent, fill = factor(KEGG_ID, levels=c(KO.order_vec)))) + 
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+facet_grid(vars(treatment), vars(time)) + ###might not work
+theme(axis.text.x = element_text(angle = 90)) +
+  #scale_fill_manual(values=KOplot_final_vec, name='KO') +
+    scale_fill_manual(values=KOplot_final_vec, name='KEGG_ID', breaks = order_KO) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+theme(legend.text = element_text(colour= "black", size=6))+
+theme(legend.position = "right") +
+guides(fill=guide_legend(ncol=2)) +    
+theme_bw() +
+theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_text(angle = 65, vjust = 0.6)) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+labs(title = "KO abundance") + 
+xlab("Donor Colony") +
+ylab("RA percent (%)")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+Treat_KO2
+
+```
+
+```{r, relative abundance plot without legend}
+##plot without legend
+SITEEnviro_KO3_noleg <- ggplot(KEGG_data_plot, aes(x=treatment_col, y=tpm, fill = factor(KO, levels=c(KO.order_vec)))) + 
+geom_bar(stat='identity', size=0.25) + # width = 0.5, 
+ facet_grid(rows = vars(reefsite)) + 
+  scale_fill_manual(values=KOplot_final_vec, name='KO') +
+#theme(axis.text.x = element_text(angle = 45)) +
+theme(legend.title = element_text(colour= "black", size=12, face= "bold" ))+
+#theme(legend.text = element_text(colour= "black", size=5))+
+#guides(fill=guide_legend(ncol=1)) +    
+theme_bw() +
+#theme(legend.text = element_text(face = "italic")) + 
+theme(axis.text.x = element_blank()) +
+#theme(axis.text.x = element_text(vjust=-2)) + ##adjust how far the text is from the axis
+##scale_fill_manual(palette = "Set1", "Family level") +
+theme(axis.title.x = element_blank())+
+theme(legend.position = "none")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+ # theme(axis.text.y = "Relative Abundance (%)")+
+#theme(axis.title.y = element_text("Relative Abundance (%)"))
+SITEEnviro_KO3_noleg
+#ggsave('C:/Users/paige/OneDrive - UTS/1.3 Outplanting Project/DATA/plots/Supps/EnviroSITE_RAplot.pdf', height=6, width=5, SITEEnviro_KO3_noleg)
+```
+
+## Beta diversity (Bray Curtis, nMDS, Core and stats) ============================================================
+
+```{r, KEGG table - only relative abundance - for SIMPER, CORE and RA plots}
+#To create a dataframe = KEGG table with the GID as row names and add taxonomy to export to Excel to do PAST stats
+KEGG.matrix <- as.matrix(KEGG[,-c(1)]) 
+row.names(KEGG.matrix) <- paste0(KEGG$KEGG_ID)
+###to remove columns with total equal to 0 or with NA an create a new matrix with these columns
+KEGG.matrix.nz <- KEGG.matrix[,colSums(KEGG.matrix)!=0] 
+
+#To create a datframe with the METAG_metadata with the sampleid as row names
+rownames(METAG_metadata) <- METAG_metadata$sampleid
+data2 <- as.data.frame(KEGG.matrix)
+#write_csv(data2, "KEGGmatrix.csv")
+env.data = sample_data(data.frame(METAG_metadata))
+row.names(env.data) <- paste0(METAG_metadata$sampleid)
+#r, taxonomy table
+#To create a dataframe with the taxonomy information with the GID as rows names 
+rownames(taxonomy) <- taxonomy$KEGG_ID
+tax<-as.matrix(taxonomy)
+tax2 <- as.matrix(tax[,-c(1)]) 
+#r, physeq object
+library(phyloseq)
+KEGG_ph = otu_table(KEGG.matrix.nz, taxa_are_rows = TRUE)
+TAX = tax_table(tax2)
+physeq1 = phyloseq(KEGG_ph, TAX)
+physeq2 = merge_phyloseq(physeq1, env.data)
+```
+```{r, to subset PHYOSEQ samples so stats are only performed addressing the questions you are trying to ask (i.e. does microme change significantly over time within outplants at sandbox}
+physeq3<- subset_samples(physeq2, treatment != "reef0")
+physeq3<- subset_samples(physeq3, treatment != "reef6m")
+
+```
+
+```{r, do PCoA plot with phyloseq}
+## Run PCoA
+ord.PCOA <- ordinate(physeq2, method = "PCoA", distance = "bray")
+# Plot PCoA
+
+p.pcoa <- plot_ordination(physeq2, 
+                           ord.PCOA,
+                           color = "treatment") +
+  geom_point(size = 8, alpha = 0.8) +
+  geom_text(aes(label = colony), hjust = 2, vjust = 2, size = 3) +
+  labs(title = "Function_PCoA_metaG") +
+  scale_color_manual(name = "treatment", 
+                     values = c("reef0" = "#E0E526", 
+                                "reef6m" = "#19D609", 
+                                "mars" = "#09ABD6", 
+                                "nursery" = "#E58826", 
+                                "rebar" = "#581845")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+p.pcoa
+```
+```{r, do PCoA with vegan}
+# Assign first column as row names
+row.names(KEGG_norm.wide) <- KEGG_norm.wide[, 1]
+# Remove first column
+KEGG_norm.wide2 <- KEGG_norm.wide[, -1]
+
+# Define colours and shapes
+colours <- c("reef0" = "#E0E526", "reef6m" = "#19D609","mars" = "#09ABD6","nursery" = "#E58826","rebar" = "#581845")
+shapes <- c(15, 16, 17, 18, 25)
+
+# Assign colony as factor variable
+# ASV_pcoa.points$colony <- factor(ASV_pcoa.points$colony)
+
+# Compute pairwise distances using different distance metrics
+bray_dist <- vegdist(KEGG_norm.wide2, method = "bray")
+# Perform ordination using PCoA and different distance metrics
+bray_pcoa <- cmdscale(bray_dist)
+# Join METAG_metadata to PCoA dataframes
+bray_pcoa <- cbind(bray_pcoa, METAG_metadata[rownames(bray_pcoa),])
+# Make colony a factor variable
+bray_pcoa[, "colony"] <- factor(bray_pcoa[, "colony"])
+
+
+# Subset numeric columns from the bray_pcoa object
+numeric_cols <- sapply(bray_pcoa, is.numeric)
+bray_pcoa_numeric <- bray_pcoa[, numeric_cols]
+
+# Perform Adonis test using adonis2
+adonis_result <- adonis2(bray_pcoa$treatment ~ ., data = bray_pcoa_numeric, permutations = 999)
+
+# View the Adonis test results
+summary(adonis_result)
+
+
+
+
+# Plot ordinations using ggplot2
+# Set theme options
+mytheme <- theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.border = element_blank(), plot.background = element_rect(fill = "white"), axis.line = element_line(colour = "black"))
+
+# Create plots
+p1 <- ggplot() + 
+  geom_point(aes(x = bray_pcoa[,1], y = bray_pcoa[,2], color = bray_pcoa$treatment, shape = bray_pcoa$colony), size = 3) + 
+  ggtitle("PCoA with Bray-Curtis dissimilarity") +
+  scale_color_manual(values = colours) +
+  scale_shape_manual(values = shapes) +
+  xlab("PCoA1") + ylab("PCoA2") +
+  mytheme
+p1
+```
+
+## Core
+```{r, Core microbiota analysis}
+#If you only need the names of the core taxa, do as follows. This returns the taxa that exceed the given prevalence and detection thresholds.
+#cManager::install("micrbiome")
+#install.packages("microbiome")
+#install.packages("ade4")  #dependent for microme
+library(microme)
+core.taxa.Metal <- core_members(Metal, detection = 0.1/100, prevalence = 90/100)
+core.taxa.Source <- core_members(Source, detection = 0.1/100, prevalence = 90/100) 
+core.taxa.Plastic <- core_members(Plastic, detection = 0.1/100, prevalence = 90/100) ## prevalence = 90% means it needs to be 
+# give you a list of the core KEGGs
+### > core.taxa.Source    "g__Synechococcus_CC9902/f2b28cfcc58ed1198c7c96640dd651f7"
+```
+
+## Fig S5a-b. nmds plots + permanova/pairwise adonis 
+
+```{r, format data to make nMDS}
+
+KEGG_norm.sub = subset(KEGG_data_plot_norm, select = c(KEGG_ID, sampleid, tpm))
+KEGG_norm.wide <- reshape2::dcast(KEGG_norm.sub, sampleid~KEGG_ID, value.var = "tpm", fill=0)
+##to make first column rownames
+rowSums(KEGG_norm.wide[,-c(1)])
+KEGG_norm.wide.nmds2 <- KEGG_norm.wide[,-c(1)]
+rownames(KEGG_norm.wide.nmds2)<-KEGG_norm.wide$sampleid
+###add METAG_metadata back
+KEGG_norm.widemeta <- KEGG_norm.wide %>% left_join(METAG_metadata)
+```
+```{r, to make nMDS for nursery vs source}
+KEGG_data_long_norm2 <- left_join(KEGG_data_long_norm, METAG_metadata)
+KEGG_data_long_norm2 <-KEGG_data_long_norm2 %>% filter(!treatment %in% c("mars"))
+KEGG_data_long_norm2 <-KEGG_data_long_norm2 %>% filter(!treatment %in% c("rebar"))
+KEGG_data_long_norm2 <-KEGG_data_long_norm2 %>% filter(!treatment %in% c("nursery"))
+
+KEGG_norm.sub = subset(KEGG_data_long_norm2, select = c(KEGG_ID, sampleid, tpm))
+KEGG_norm.wide <- reshape2::dcast(KEGG_norm.sub, sampleid~KEGG_ID, value.var = "tpm", fill=0)
+rowSums(KEGG_norm.wide[,-c(1)])
+KEGG_norm.wide.nmds2 <- KEGG_norm.wide[,-c(1)]
+rownames(KEGG_norm.wide.nmds2)<-KEGG_norm.wide$sampleid
+KEGG_norm.widemeta <- KEGG_norm.wide %>% left_join(METAG_metadata)
+#write_csv(KEGG_norm20.widemeta, 'FINAL_KEGGtable.csv')
+#now ready for the NMDS
+library(data.table)
+
+KEGG_stats<-setDT(KEGG_norm.wide.nmds2, keep.rownames = "sampleid")
+
+KEGG_norm.wide.nmds2df <- as.data.frame(KEGG_norm.wide.nmds2)
+
+KEGG_norm.wide.nmds2 <- KEGG_norm.wide.nmds2[,-c(1)]
+KEGG_nmds.nMDS<-metaMDS(KEGG_norm.wide.nmds2,distance = "bray", try =99, trymax=100, autotransform = F)
+#to do log2 transformation
+#KEGG_norm.wide.nmds2_log <- log2(KEGG_norm.wide.nmds2+1)
+#KEGG_nmds.nMDS<-metaMDS(KEGG_norm.wide.nmds2_log,distance = "bray", try =99, trymax=100, autotransform = F)
+
+KEGG_nmds.nMDS
+stressplot(KEGG_nmds.nMDS)
+plot(KEGG_nmds.nMDS)
+names(KEGG_nmds.nMDS)
+KEGG_nmds.points<-cbind(KEGG_norm.wide[,c(1)], as.data.frame(KEGG_nmds.nMDS$points))
+colnames(KEGG_nmds.points)[1] <- "sampleid"
+KEGG_nmds.points <- KEGG_nmds.points %>% left_join(METAG_metadata)
+```
+```{r, PAIRWISE ADONIS FOR BRAY DISTANCES}
+library(vegan)
+
+KEGG_codes.list<- subset(KEGG_stats, select = c(sampleid))
+
+KEGG_codes.list2<-distinct(KEGG_codes.list)
+KEGG_codes.list2<-KEGG_codes.list2 %>% arrange(KEGG_codes.list2)
+KEGG_list.meta <-KEGG_codes.list2 %>% left_join(METAG_metadata)
+
+KEGG_nmds.meta <- KEGG_list.meta %>% left_join(KEGG_stats)
+
+KEGG_meta.mat<-as.matrix(KEGG_nmds.meta[,-c(1:4)])
+rownames(KEGG_meta.mat) <- KEGG_nmds.meta$sampleid;
+
+KEGGpairwise.res2 <- pairwise.adonis(KEGG_meta.mat, KEGG_nmds.meta$treatment,
+                                 p.adjust.m = "fdr") 
+
+summary.pwadonis(KEGGpairwise.res2)
+
+bray.dist<-vegdist(KEGG_meta.mat, method='bray')
+adonis.res <- adonis2(bray.dist~treatment, data=KEGG_nmds.meta, permutations =9999, method="bray")
+adonis.res
+all_coralpairwise.res <- pairwise.adonis(bray.dist, KEGG_nmds.meta$treatment,
+                                 p.adjust.m = "fdr")
+summary.pwadonis(all_coralpairwise.res)
+
+
+```
+```{r, PLOT nMDS for treatment}
+library(tidyverse)
+KEGG_nmds.points$colony <- as.factor(KEGG_nmds.points$colony)
+
+KEGGMDS.vegan2 <- ggplot(KEGG_nmds.points) + 
+  geom_point(aes(x = MDS1, y = MDS2, color = treatment, shape = colony), size = 6) +
+ # geom_text(aes(x = MDS1, y = MDS2, label = colony), hjust = 2, vjust = 2, size = 3) +
+  theme_bw()
+KEGGMDS.vegan2
+
+KEGGMDS.vegan22 <- KEGGMDS.vegan2 + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + guides(size = FALSE) +
+  labs(title= 'KEGG: bray nMDS')+
+  scale_colour_manual(values=c(`reef0`="#E0E526",`reef6m`="#19D609", `mars`="#09ABD6", `nursery`="#E58826", `rebar`="#581845"))+
+    guides(color = guide_legend("treatment",override.aes = list(size = 6)))+
+scale_shape_manual(values = c(15,16,17,18,25,23))+
+  guides(shape = guide_legend("time",override.aes = list(size=6)))+
+  theme(legend.text=element_text(size=11))
+KEGGMDS.vegan22
+#ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try3/plots/metaG_function_nMDS_all.pdf', height=4, width=6)
+
+
+ggsave('C:/Users/paige/OneDrive - UTS/1.6 Siderophore Project/16S/qiime/try4/plots/T6m plots/nmds_function_reef.pdf', height=4, width=6)
+```
+
+
